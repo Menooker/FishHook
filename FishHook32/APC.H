@@ -71,7 +71,7 @@ void Logss(char* x, char *  y)
          if ( lpData ) 
          { 
              // 写入需要注入的模块路径全名 
-             bStatus = WriteProcessMemory ( hProcess, lpData, szDllPath, uLen, &dwRet ) ; 
+             bStatus = WriteProcessMemory ( hProcess, lpData, szDllPath, uLen, (SIZE_T*)&dwRet ) ; 
          } 
          CloseHandle ( hProcess ) ; 
 
@@ -225,7 +225,7 @@ void Logss(char* x, char *  y)
          if ( lpData ) 
          { 
              // 写入需要注入的模块路径全名 
-             bStatus = WriteProcessMemory ( hProcess, lpData, szDllPath, uLen, &dwRet ) ; 
+             bStatus = WriteProcessMemory ( hProcess, lpData, szDllPath, uLen, (SIZE_T*)&dwRet ) ; 
          } 
          CloseHandle ( hProcess ) ; 
      } 

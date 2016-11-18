@@ -20,7 +20,9 @@
 #endif
 
 
-
+#ifdef _WIN64
+#define sInfo (*psInfo)
+#endif
 struct DllFunctionContext
 {
     long Unknown;
@@ -165,6 +167,13 @@ HANDLE hToken, LPCWSTR lpApplicationName,LPWSTR lpCommandLine,LPSECURITY_ATTRIBU
 
 typedef  BOOL (__stdcall *PFShellExecuteExW)(  _Inout_  SHELLEXECUTEINFOW *pExecInfo);
 typedef  int (__stdcall *PSHCreateProcess)(int p1,HANDLE hToken,wchar_t *lpApplicationName,wchar_t * lpCommandLine,DWORD dwCreationFlags,LPSECURITY_ATTRIBUTES lpProcessAttributes,LPSECURITY_ATTRIBUTES lpThreadAttributes,BOOL bInheritHandles,LPVOID lpEnvironment,LPCWSTR lpCurrentDirectory,LPSTARTUPINFOW lpStartupInfo,LPPROCESS_INFORMATION lpProcessInformation,int p2,char p3,int p4);
+typedef int (__fastcall *PAicLaunchAdminProcess)(WCHAR *lpApplicationName, WCHAR *lpCommandLine, void* a3, DWORD dwCreationFlags, WCHAR *lpCurrentDirectory, HWND a6, LPSTARTUPINFOW lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation, DWORD *a9);
 
+  typedef  PVOID
+(NTAPI
+*PRtlGetCallersAddress)(
+
+  OUT PVOID               *CallersAddress,
+  OUT PVOID               *CallersCaller );
 //pointers
 #endif

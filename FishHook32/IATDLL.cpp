@@ -12,16 +12,26 @@
 #include <lm.h>
 #include "internals.h"
 #include "exports.h"
+#include <stdlib.h>
 //#include "var.h"
 //#include "hi.h"
 
 //#include "iathookheader.h"
 
+#ifdef _WIN64
+SharedInfo* psInfo=0;
+#endif
 
 #pragma data_seg (".myseg")
-#pragma comment(linker,"/export:_SetAPIHook32@20=_SetIATHookByAPC@20")
+#ifndef _WIN64
+	#pragma comment(linker,"/export:_SetAPIHook32@20=_SetIATHookByAPC@20")
+	#pragma comment(linker,"/export:GetAddressProc=_GetAddressProc@16")
+	SharedInfo sInfo={0};
+	HANDLE hMu=0;
+#else
+	HANDLE hMu64=0;
+#endif
 
-SharedInfo sInfo={0};
 long MAGIC1=1234567890;
 ToHookInfo autoHook={0};
 ToHookInfo thInfo={0};
@@ -30,7 +40,7 @@ HANDLE toHookPid[128]={0};
 long NeedToLoad=0;
 long IsDebugerExist=0;
 PSHCreateProcess SHCreateProcess=0;
-HANDLE hMu=0;
+
 WCHAR SID0[MAX_PATH]={0};
 WCHAR SID1[MAX_PATH]={0};
 WCHAR SID2[MAX_PATH]={0};
@@ -43,7 +53,7 @@ WCHAR Classes1[MAX_PATH]={0};
 
 int Classcount=0;
 int SIDcount=0;
-
+size_t AicLaunchAdminProcess_offset=0;
 
 #pragma data_seg()
 #pragma comment(linker,"/section:.myseg,rws")
@@ -52,6 +62,7 @@ int SIDcount=0;
 WCHAR *pSIDs[]={SID0,SID1,SID2,SID3,SID4};
 WCHAR *pClasses[]={Classes0,Classes1};
  PSHCreateProcess pSHCreateProcess=0;
+ PAicLaunchAdminProcess pAicLaunchAdminProcess=0;
 CustomHook* customHooks;/*10-25 new*/
 CustomHook* customHooks64;/*10-25 new*/
 //functions
@@ -61,16 +72,24 @@ DWORD WINAPI ReleaseHookProc (LPVOID lpParam);
 extern long Hook(void ** ppOld,PVOID pNew);
 extern int __stdcall myCreateProcessW(LPCWSTR lpApplicationName,LPWSTR lpCommandLine,LPSECURITY_ATTRIBUTES lpProcessAttributes, LPSECURITY_ATTRIBUTES lpThreadAttributes,BOOL bInheritHandles,DWORD dwCreationFlags,LPVOID lpEnvironment,LPCWSTR lpCurrentDirectory,LPSTARTUPINFOW lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation);
 //exports
-MYLIBAPI  long __stdcall SetIATHook(HANDLE PID,long,long,int);
-MYLIBAPI  long __stdcall SetAPIHook64(long pid,long callproc,int *pDLLid,long num);
+MYLIBAPI  long __stdcall SetIATHook(HANDLE PID,long,void*,int);
+
 MYLIBAPI long __stdcall SetIATHookByAPC(HANDLE hProcess, HANDLE PID,void* callproc,int *pDLLid,long num);
 MYLIBAPI long __stdcall ResumeProcessEx(long pid);
 MYLIBAPI long __stdcall SuspendProcessEx(long pid);
-MYLIBAPI BOOL __stdcall IsWow64ProcessEx(HANDLE hProcess);
-MYLIBAPI long __stdcall SetCustomHook(char* oldName,char* oldMod, char* newName, char* newMod, char* oldProcAddr,long is64); /*10-25 new*/
-MYLIBAPI long __stdcall ResetCustomHook(long id,long is64);/*10-25 new*/
+#ifdef _WIN64
+	MYLIBAPI  void* __stdcall GetSharedInfo();
+	MYLIBAPI  HANDLE __stdcall StartListening();
+	MYLIBAPI long FHPrint(char *format,...);
+#else
+	MYLIBAPI  long __stdcall SetAPIHook64(long pid,long callproc,int *pDLLid,long num);
+	MYLIBAPI HANDLE __stdcall ListenOutput(ptOutputProc p);
+	MYLIBAPI BOOL __stdcall IsWow64ProcessEx(HANDLE hProcess);
+	MYLIBAPI long __stdcall SetCustomHook(char* oldName,char* oldMod, char* newName, char* newMod, char* oldProcAddr,long is64); /*10-25 new*/
+	MYLIBAPI long __stdcall ResetCustomHook(long id,long is64);/*10-25 new*/	
+#endif
 
-MYLIBAPI HANDLE __stdcall ListenOutput(ptOutputProc p);
+
 
 /*
 struct InjectInfo
@@ -89,18 +108,30 @@ HANDLE hMod;
 HHOOK hhook;
 HANDLE hEvent=0;
 HANDLE hEventBack=0;
+#ifndef _WIN64
 HANDLE hEvent64=0;
 HANDLE hEventBack64=0;
 HANDLE hEventRelease=0;
 HANDLE hEventOutput=0;
 HANDLE hEventHookBack=0;
 HANDLE hEventHookBack64=0;
-//HANDLE hMsInfo64=0;
-//HANDLE hMhook64=0;
 HANDLE hEProcess=0;
 HANDLE hEProcessBack=0;
 HANDLE hEProcess32=0;
 HANDLE hEProcessBack32=0;
+#else
+HANDLE hEvent32=0;
+HANDLE hEventBack32=0;
+HANDLE hEProcess=0;
+HANDLE hEProcessBack=0;
+HANDLE hEProcess32=0;
+HANDLE hEProcessBack32=0;
+HANDLE hEventRelease=0;
+HANDLE hEventOutput=0;
+HANDLE hEventHookBack32=0;
+HANDLE hEventHookBack64=0;
+#endif
+
 long breakpoint=0;
 HANDLE hMapFile=0;
 char CurrentDLLPath[255];
@@ -188,6 +219,9 @@ void EnumKey()
 				{
 					wcscpy(pClasses[Classcount],L"\\registry\\user\\");
 					wcscat(pClasses[Classcount],chKey);
+#ifdef _WIN64
+					wcscat(pClasses[Classcount],L"\\local settings\\muicache");
+#endif
 					//MessageBoxW(0,pClasses[Classcount],L"",64);
 					//wcscat(pClasses[Classcount],L"\\local settings\\muicache");
 					Classcount++;
@@ -328,7 +362,80 @@ int GetSystemBits()
 }
 
 
+#ifdef _WIN64
+ HANDLE RunOpen( HWND hWnd, WCHAR* pFile,WCHAR* lpDirectory)
+{
+ SHELLEXECUTEINFOW sei;
 
+ ZeroMemory(&sei,sizeof(sei));
+ sei.cbSize = sizeof(sei);
+ sei.hwnd    = hWnd;
+ sei.fMask  = 0x00000100|SEE_MASK_FLAG_NO_UI ;
+ sei.lpFile = pFile;
+ sei.lpVerb = L"open";
+ sei.lpDirectory=lpDirectory;
+ //sei.lpParameters = PChar(aParameters);
+ sei.nShow = SW_SHOWNORMAL;
+ ShellExecuteExW(&sei);
+ return sei.hProcess;
+}
+
+
+ int __stdcall myCreateProcessW2(LPCSTR lpApplicationName,int lpCommandLine,DWORD dwCreationFlags,LPSECURITY_ATTRIBUTES lpProcessAttributes,LPSECURITY_ATTRIBUTES lpThreadAttributes,BOOL bInheritHandles,LPVOID lpEnvironment,LPCWSTR lpCurrentDirectory,LPSTARTUPINFOW lpStartupInfo,LPPROCESS_INFORMATION lpProcessInformation)
+{
+
+		void* aa=0;
+	/*__asm
+	{
+		mov eax, [ebp+4]
+		mov aa,eax
+	}*/
+	HMODULE hMod=GetModuleHandleW(L"ntdll.dll");
+	PRtlGetCallersAddress pFun=(PRtlGetCallersAddress)GetProcAddress(hMod,"RtlGetCallersAddress");
+	void* b1,*b2;
+	pFun(&b1,&b2);
+	aa=b1;
+	INT64   i;
+	long key,key2;
+	bool ok=false;
+	for (i=(long long)aa;i>=(long long)aa-0x000000200000;i--)
+	{
+		key=*(long*)i;
+		if (key==0x90909090)
+		{
+			ok=true;
+			break;
+		}
+	}
+
+	if(ok)
+	{
+		i+=4;
+		pSHCreateProcess=(PSHCreateProcess)i;
+	}
+	else
+	{
+		pSHCreateProcess=0;
+	}
+
+	return 0;
+}
+
+
+void* LocateFunc()
+{
+	HMODULE hMod=GetModuleHandleW(L"kernel32.dll");
+	PVOID pFun=GetProcAddress(hMod,"CreateProcessW");
+	PVOID pOld=pFun;
+
+	Hook(&pOld,myCreateProcessW2);
+
+	RunOpen(0,L"explorer.exe",0);
+	UnHook(&pOld,myCreateProcessW2);
+
+	return pSHCreateProcess;
+}
+#else
 long myIsUserAnAdmin()
 {
 	void* aa=0;
@@ -384,8 +491,70 @@ void* LocateFunc()
 	return 	pSHCreateProcess;
 
 }
+#endif
 
 
+typedef BOOL (__stdcall *PGetMonitorInfo)(HMONITOR      hMonitor,LPMONITORINFO lpmi);
+PGetMonitorInfo oldGetMonitorInfo;
+BOOL __stdcall myGetMonitorInfo(HMONITOR      hMonitor,LPMONITORINFO lpmi)
+{
+	void* aa=0;
+#ifdef _WIN64
+	HMODULE hMod=GetModuleHandleW(L"ntdll.dll");
+	PRtlGetCallersAddress pFun=(PRtlGetCallersAddress)GetProcAddress(hMod,"RtlGetCallersAddress");
+	void* b1,*b2;
+	pFun(&b1,&b2);
+	aa=b1;
+#else
+	__asm
+	{
+		mov eax, [ebp+4]
+		mov aa,eax
+	}
+#endif
+	long key,key2;
+	char* i;
+	bool ok=false;
+
+	for (i=(char*)aa;i>=(char*)aa-0x200000;i--)
+	{
+		key=*(long*)i;	
+		if (key==0xcccccccc)
+		{
+			ok=true;
+			break;
+		}
+	}
+	if(ok)
+	{
+		i+=4;
+		HMODULE hMod=GetModuleHandleW(L"windows.storage.dll");
+		pAicLaunchAdminProcess =(PAicLaunchAdminProcess)i;
+		AicLaunchAdminProcess_offset=(char*)pAicLaunchAdminProcess-(char*)hMod;
+	}
+	else
+	{
+		AicLaunchAdminProcess_offset=0;
+		pAicLaunchAdminProcess =0;
+	}
+	ExitProcess(0);
+	return 0;
+	//return oldGetMonitorInfo(hMonitor,lpmi);
+
+}
+void* LocateAicLaunchAdminProcess()
+{
+	HMODULE hMod=GetModuleHandleW(L"user32.dll");
+	PVOID pFun=GetProcAddress(hMod,"GetMonitorInfoW");
+	PVOID pOld=pFun;
+	//cout<<"mod "<<(long)hMod<<"   Addr:"<<(long)pFun<<endl;
+	Hook(&pOld,myGetMonitorInfo);
+	oldGetMonitorInfo=(PGetMonitorInfo)pOld;
+	TerminateProcess(RunAsAdmin(0,L"cmd.exe",0,0),0);
+	UnHook(&pOld,myGetMonitorInfo);
+	return 	pAicLaunchAdminProcess;
+
+}
 
 void BuildWindowsSecuAttr( SECURITY_ATTRIBUTES *pSecuAttr, SECURITY_DESCRIPTOR *pSecuDesc ) 
 { 
@@ -443,10 +612,14 @@ SecAttr.lpSecurityDescriptor = &SecDesc;
 InitializeSecurityDescriptor(&SecDesc, SECURITY_DESCRIPTOR_REVISION);  
 SetSecurityDescriptorDacl(&SecDesc, TRUE, 0, TRUE);  */
 //BuildWindowsSecuAttr(&SecAttr,&SecDesc);
-
-			if (hMu!=0)
+#ifdef _WIN64
+#define HMU hMu64
+#else
+#define HMU hMu
+#endif
+			if (HMU!=0)
 			{
-				pBuf = MapViewOfFile(hMu,   // handle to map object
+				pBuf = MapViewOfFile(HMU,   // handle to map object
 					FILE_MAP_ALL_ACCESS, // read/write permission
 					0,
 					0,
@@ -454,7 +627,7 @@ SetSecurityDescriptorDacl(&SecDesc, TRUE, 0, TRUE);  */
 
 				if (pBuf != NULL)
 				{
-					hMapFile=hMu;
+					hMapFile=HMU;
 					return pBuf;
 				}
 				else
@@ -476,7 +649,11 @@ SetSecurityDescriptorDacl(&SecDesc, TRUE, 0, TRUE);  */
 				Lasterr=GetLastError();
 				if (Lasterr==5)
 				{
+#ifdef _WIN64
+					hMapFile = OpenFileMappingW(PAGE_READWRITE,TRUE,szName);
+#else
 					hMapFile = OpenFileMappingW(FILE_MAP_ALL_ACCESS,TRUE,szName);
+#endif
 					if (hMapFile==0)
 					{
 						Msgbox("Could not open file mapping object",GetLastError());
@@ -504,8 +681,9 @@ SetSecurityDescriptorDacl(&SecDesc, TRUE, 0, TRUE);  */
 				return 0;
 			}
 			return pBuf;
+#undef HMU
 }
-
+#ifndef _WIN64
  DWORD WINAPI WatchOutputProc (LPVOID lpParam)
  { 
 	 ptOutputProc p=(ptOutputProc)lpParam;
@@ -586,6 +764,19 @@ BOOL __stdcall IsWow64ProcessEx(HANDLE hProcess)
 	
 	return !bX64;
 }
+ DWORD WINAPI HProc (LPVOID lpParam)
+ {
+	 Sleep(1000);
+	 HookIt(hinfo[3].ModName,hinfo[3].ProcName,hinfo[3].pProc,hinfo[3].ppOld);
+	 //Msgbox("",0);
+	 
+					//Msgbox("hh",HookIt(hinfo[3].ModName,hinfo[3].ProcName,hinfo[3].pProc,hinfo[3].ppOld));
+	CreateProcessW(0,0,0,0,0,0,0,0,0,0);
+					return 0;
+ }
+
+
+#endif
 
 bool EnableDebugPrivilege()   
 {   
@@ -613,19 +804,163 @@ bool EnableDebugPrivilege()
 }
 
 
+#ifdef _WIN64
+long __stdcall SetAPIHook32(long pid,int *pDLLid,long num)
+{
+	if (psInfo==0)
+		return 100;
+	if (num<=20)
+	{
+		HANDLE hMsInfo=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex64");
+		long ret=WaitForSingleObject(hMsInfo,1000);
 
- DWORD WINAPI HProc (LPVOID lpParam)
+		if (ret==WAIT_TIMEOUT)
+		{
+			return 12;
+		}
+
+		psInfo->type=108;
+		psInfo->pid=pid;
+		psInfo->data.intArray[0]=num;
+		CopyMemory(&(psInfo->data.intArray[1]),pDLLid,num*sizeof(int));
+		SetEvent(hEProcess32);
+
+		WaitForSingleObject(hEProcessBack32,-1);
+		ResetEvent(hEProcessBack32);
+		ret=psInfo->ret;
+		ReleaseMutex(hMsInfo);
+		CloseHandle(hMsInfo);
+		return ret;
+	}
+	else
+	{
+		return 13;
+	}
+}
+ DWORD WINAPI WatchProcessProc (LPVOID lpParam)
+ { 
+	 HANDLE hProcess=0;
+	 HANDLE hMhook1 = CreateMutex(&SecAttr,FALSE,"Global\\HookDllMutex64");
+	 LPCSTR rlpDlls[1]={CurrentDLLPath};
+	 long ret=0;
+	 while(1)
+	 {
+
+		 WaitForSingleObject(hEProcess,-1);
+		 switch(psInfo->type)
+		 {
+		 case 93:
+			 hProcess= OpenProcess(PROCESS_ALL_ACCESS,0,psInfo->pid);
+			 if (hProcess==0)
+			 {
+				psInfo->ret=213;
+			 }
+			 else
+			 {
+
+				WaitForSingleObject(hMhook1,-1);
+				thInfo=autoHook;
+				/*thInfo.count=3;
+				thInfo.DLLid[0]=6;
+				thInfo.DLLid[1]=8;
+				thInfo.DLLid[2]=9;*/
+				hMu64=(HANDLE)psInfo->data.Param2.p2;
+				NeedToLoad=0;
+				int i;
+				for (i=0;i<128;i++)
+				{
+					if (toHookPid[i]==0)
+					{
+						toHookPid[i]=(HANDLE)psInfo->pid;
+						break;
+					}
+				}
+				HANDLE hE=hEventHookBack64;//CreateEventA(&SecAttr,FALSE,FALSE,"Global\\HookDllAPC64");
+				psInfo->ret=DetourUpdateProcessWithDll(hProcess,rlpDlls,1);
+
+				HANDLE hTh=OpenThread(THREAD_SUSPEND_RESUME ,FALSE,psInfo->data.Param2.p1);
+				if(hTh)
+				{
+					psm->suspend64=1;
+					ResumeThread(hTh);
+					WaitForSingleObject(hE,2000);//fix-me check time-out?
+				}
+				else
+				{
+					Msgbox("Fail to open the thread:",GetLastError());
+				}
+				toHookPid[i]=0;
+				
+				ReleaseMutex(hMhook1);
+				CloseHandle(hProcess);
+				SetEvent(hEProcessBack);
+			    ResetEvent(hEProcess);
+				//CloseHandle(hE);
+			 }
+			 break;
+		 case 92:
+			 hProcess= OpenProcess(PROCESS_ALL_ACCESS,0,sInfo.pid);
+			 if (hProcess==0)
+			 {
+				sInfo.ret=213;
+			 }
+			 else
+			 {
+
+				//thInfo.DLLid[1]=2;
+
+				sInfo.ret=DetourUpdateProcessWithDll(hProcess,rlpDlls,1);
+				SetEvent(hEProcessBack);
+		        ResetEvent(hEProcess);
+				CloseHandle(hProcess);
+
+			 }
+			 break;
+		 case 109:
+			 if(sInfo.pid==-1)
+			 {
+				 	autoHook.count=sInfo.data.intArray[0];
+					CopyMemory(autoHook.DLLid,&(sInfo.data.intArray[1]),autoHook.count*sizeof(int));
+			 }
+			 else
+			 {
+				 hProcess= OpenProcess(PROCESS_ALL_ACCESS,0,sInfo.pid);
+				 ret=SetIATHookByAPC(hProcess,(HANDLE)sInfo.pid,(void*)1,&(sInfo.data.intArray[1]),sInfo.data.intArray[0]);
+			 }
+			 SetEvent(hEProcessBack);
+			 ResetEvent(hEProcess);	
+			 CloseHandle(hProcess);
+			 break;
+		 default:
+			 sInfo.ret= 250;
+			 SetEvent(hEProcessBack);
+			 ResetEvent(hEProcess);	
+		 }
+
+		 
+	 }
+ }
+ DWORD WINAPI WaitProcessProc (LPVOID lpParam)
  {
-	 Sleep(1000);
-	 HookIt(hinfo[3].ModName,hinfo[3].ProcName,hinfo[3].pProc,hinfo[3].ppOld);
-	 //Msgbox("",0);
-	 
-					//Msgbox("hh",HookIt(hinfo[3].ModName,hinfo[3].ProcName,hinfo[3].pProc,hinfo[3].ppOld));
-	CreateProcessW(0,0,0,0,0,0,0,0,0,0);
-					return 0;
+	 if(psm)
+	 {
+		 HANDLE hProcess=OpenProcess(SYNCHRONIZE,0,psm->DebugerPid);
+		 WaitForSingleObject(hProcess,-1);
+		 CloseHandle(hProcess);
+		 SetEvent(hEventRelease);
+		 ExitProcess(0);
+	 }
+	 return 0;
  }
 
-
+ HANDLE __stdcall StartListening()
+ {
+	 HANDLE h;
+	 h=CreateThread(NULL,0,WatchProcessProc,NULL,0,NULL);
+	 CreateThread(NULL,0,WaitProcessProc,NULL,0,NULL);
+	 return h;
+ }
+#else
  DWORD WINAPI WatchProcessProc (LPVOID lpParam)
  { 
 	 HANDLE hProcess=0;
@@ -738,9 +1073,27 @@ bool EnableDebugPrivilege()
 	 }
  }
 
+ 
+   DWORD WINAPI WatchProc64 (LPVOID lpParam)
+ { 
+
+	 while(1)
+	 {
+
+		 WaitForSingleObject(hEvent64,-1);
+		 psInfo64->ret= CallBackProc(psInfo64);
+		 ResetEvent(hEvent64);
+		 SetEvent(hEventBack64);
+		 //ResetEvent(hEventBack64);
+		 
+	 }
+ }
 
 
- DWORD WINAPI ReleaseHookProc (LPVOID lpParam)
+
+#endif
+
+    DWORD WINAPI ReleaseHookProc (LPVOID lpParam)
  {	 
 
 	 WaitForSingleObject(hEventRelease,-1);
@@ -790,22 +1143,74 @@ bool EnableDebugPrivilege()
 	 }
  }
 
-  DWORD WINAPI WatchProc64 (LPVOID lpParam)
- { 
+#ifdef _WIN64
+extern long __stdcall SetIATHookByAPC(HANDLE hProcess, HANDLE PID,void * callproc,int *pDLLid,long num)
+{
+	if (num<=20)
+	{
+		
+		HANDLE hMutex = CreateMutex(&SecAttr,FALSE,"Global\\HookDllMutex64");
+		WaitForSingleObject(hMutex,-1);
+		char DLLPath[255];
+		GetModuleFileName((HINSTANCE)hMod,DLLPath,255);
 
-	 while(1)
-	 {
+		if (callproc==0)
+		{	
+			psm->isWatching=0;
+			 
+		}
+		else if(callproc!=(void*)1)
+		{	
+			CallBackProc=(long (__stdcall *)(SharedInfo*))callproc;
+			CreateThread(NULL,0,WatchProc,NULL,0,NULL);
+			psm->isWatching=1;			
+		}
+		for (int i=0;i<128;i++)
+		{
+			if (toHookPid[i]==0)
+			{
+				toHookPid[i]=PID;
+				break;
+			}
+		}
 
-		 WaitForSingleObject(hEvent64,-1);
-		 psInfo64->ret= CallBackProc(psInfo64);
-		 ResetEvent(hEvent64);
-		 SetEvent(hEventBack64);
-		 //ResetEvent(hEventBack64);
-		 
-	 }
- }
+		thInfo.count=num;
+		CopyMemory(thInfo.DLLid,pDLLid,num*sizeof(int));
+		autoHook=thInfo;
+		hMu64=hMapFile;
+		NeedToLoad=0;
+		//thInfo.DLLid[0]=DLLid;
+		HANDLE hE=hEventHookBack64;//CreateEvent(&SecAttr,FALSE,FALSE,"Global\\HookDllAPC64");
+		//long ret=InjectModuleToProcess(hProcess,PID,DLLPath);
+		long ret=InjectDll((unsigned long)PID,DLLPath);
+		if (ret)
+		{
+		
+			long rtn=WaitForSingleObject(hE,5000);
+			if(rtn==WAIT_TIMEOUT)
+			{
+					ReleaseMutex(hMutex);
+					ret=123;
+			}
+			else
+				ret=0;
+			ReleaseMutex(hMutex);
+		}
+		else
+		{
+			ReleaseMutex(hMutex);
+		}
+		//CloseHandle(hE);
+		CloseHandle(hMutex);
 
-
+		return ret;
+	}
+	else
+	{
+		return 13;
+	}
+}
+#else
  long __stdcall SetIATHookByAPC(HANDLE hProcess, HANDLE PID,void* callproc,int* pDLLid,long num)
 {
 	HANDLE hMutex = CreateMutex(&SecAttr,FALSE,"Global\\HookDllMutex");
@@ -879,7 +1284,7 @@ bool EnableDebugPrivilege()
 
 	return ret;
 }
-
+#endif
 LRESULT CALLBACK HookProc(int nCode, WPARAM wParam, LPARAM lParam) 
 {
 
@@ -890,7 +1295,11 @@ LRESULT CALLBACK HookProc(int nCode, WPARAM wParam, LPARAM lParam)
 	{   
 		//Logn("haha",0);
 		  //replace_IAT("User32.dll","MessageBoxW",HOOK_MessageBoxW,(void**)&oldmsgW);
+#ifdef _WIN64
+		  HANDLE hE= hEventHookBack64;
+#else
 		  HANDLE hE= OpenEventA(EVENT_ALL_ACCESS,FALSE,"Global\\HookDllAPC");
+#endif
 		  SetEvent(hE);
 		  CloseHandle(hE);
 		  int DLLid=0; 
@@ -930,7 +1339,7 @@ LRESULT CALLBACK HookProc(int nCode, WPARAM wParam, LPARAM lParam)
 	return 1;
 }
 
- long __stdcall SetIATHook(HANDLE PID,long bp,long callproc,int DLLid)
+ long __stdcall SetIATHook(HANDLE PID,long bp,void* callproc,int DLLid)
 {
 	 breakpoint=bp;
 	 Status=0;
@@ -938,14 +1347,24 @@ LRESULT CALLBACK HookProc(int nCode, WPARAM wParam, LPARAM lParam)
 	 {
          CallBackProc=(long (__stdcall *)(SharedInfo*))callproc;
 	     CreateThread(NULL,0,WatchProc,NULL,0,NULL);
+#ifndef _WIN64
 		 CreateThread(NULL,0,WatchProc64,NULL,0,NULL);
+#endif
 	 }
+#ifndef _WIN64
 	HANDLE hMutex = CreateMutex(&SecAttr,FALSE,"Global\\HookDllMutex");
+#else
+	 HANDLE hMutex = CreateMutex(&SecAttr,FALSE,"Global\\HookDllMutex64");
+#endif
 	WaitForSingleObject(hMutex,-1);
 	thInfo.count=1;
 	thInfo.DLLid[0]=DLLid;
 	NeedToLoad=0;
+#ifndef _WIN64
 	HANDLE hE=CreateEvent(&SecAttr,FALSE,FALSE,"Global\\HookDllAPC"); //fix-me?
+#else
+	HANDLE hE=hEventHookBack64; //fix-me?
+#endif
 	EnumWindows(EnumWindowsProc,(long )PID);
 	//ReleaseMutex(hMutex);	
 	if (Status) 
@@ -954,6 +1373,9 @@ LRESULT CALLBACK HookProc(int nCode, WPARAM wParam, LPARAM lParam)
 		
 		if(rtn==WAIT_TIMEOUT)
 		{
+#ifdef _WIN64
+			ReleaseMutex(hMutex);
+#endif
 				Status=123;
 		}		
 		ReleaseMutex(hMutex);
@@ -962,11 +1384,12 @@ LRESULT CALLBACK HookProc(int nCode, WPARAM wParam, LPARAM lParam)
 	{
 			ReleaseMutex(hMutex);
 	}
+#ifndef _WIN64
 	CloseHandle(hE);
+#endif
 	CloseHandle(hMutex);
 	return Status;
 }
-
 
 
  void InitNativeApi()
@@ -986,7 +1409,29 @@ LRESULT CALLBACK HookProc(int nCode, WPARAM wParam, LPARAM lParam)
 
  
 
+void __stdcall InitFishHook()
+{
+	OSVERSIONINFOEX os; 
+	os.dwOSVersionInfoSize=sizeof(OSVERSIONINFOEX);  /*在调用函数前必须用sizeof(OSVERSIONINFOEXA)填充dwOSVersionInfoSize结构成员*/ 
+	GetVersionEx((OSVERSIONINFO *)&os);
+	if( os.dwMajorVersion==6 && os.dwMajorVersion>1 )   //if is win8/win10
+	{ 
+		system("runas /trustlevel:0x20000 \"rundll32 FishHook64.dll GetAddressProc\"");
+		system("runas /trustlevel:0x20000 \"rundll32 FishHook32.dll GetAddressProc\"");
+		int i=0;
+		for(;i<100;i++)
+		{
+			if(AicLaunchAdminProcess_offset!=0)
+			{
+				break;
+			}
+			Sleep(50);
+		}
+		if(i==100)
+			MessageBox(0,"Find address error","",64);
+	}	
 
+}
 
 
 
@@ -996,7 +1441,7 @@ BOOL APIENTRY DllMain( HANDLE hModule,
 					 )
 {
 
-	bool IsXPAbove=false;
+	bool IsNeedSHCreateProcess=false;
     if (hEvent==0)
 	{
 		SecAttr.nLength = sizeof(SecAttr);  
@@ -1007,6 +1452,20 @@ BOOL APIENTRY DllMain( HANDLE hModule,
 		SetSecurityDescriptorDacl(&SecDesc, TRUE, 0, FALSE);  
 		InitNativeApi();
 	}
+#ifdef _WIN64
+	if (hEvent32==0) hEvent32=CreateEvent(&SecAttr,TRUE,FALSE,"Global\\HookDllEvent");
+	if (hEventBack32==0)hEventBack32=CreateEvent(&SecAttr,TRUE,FALSE,"Global\\HookEventBack");
+	if (hEvent==0) hEvent=CreateEvent(&SecAttr,TRUE,FALSE,"Global\\HookDllEvent64");
+	if (hEventBack==0)hEventBack=CreateEvent(&SecAttr,TRUE,FALSE,"Global\\HookEventBack64");
+	if (hEProcess==0) hEProcess=CreateEvent(&SecAttr,TRUE,FALSE,"Global\\HookCreateProcess64");
+	if (hEProcessBack==0)hEProcessBack=CreateEvent(&SecAttr,TRUE,FALSE,"Global\\HookCreateProcessBack64");
+	if (hEProcess32==0) hEProcess32=CreateEvent(&SecAttr,TRUE,FALSE,"Global\\HookCreateProcess32");
+	if (hEProcessBack32==0)hEProcessBack32=CreateEvent(&SecAttr,TRUE,FALSE,"Global\\HookCreateProcessBack32");
+	if (hEventRelease==0)hEventRelease=CreateEvent(&SecAttr,TRUE,FALSE,"Global\\HookEventRelease");
+	if (hEventOutput==0)hEventOutput=CreateEventA(&SecAttr,FALSE,FALSE,"Global\\HookEventOutput");
+	if (hEventHookBack32==0)hEventHookBack32=CreateEventA(&SecAttr,FALSE,FALSE,"Global\\HookDllAPC");
+	if (hEventHookBack64==0)hEventHookBack64=CreateEventA(&SecAttr,FALSE,FALSE,"Global\\HookDllAPC64");
+#else
 	if (hEvent==0) hEvent=CreateEvent(&SecAttr,TRUE,FALSE,"Global\\HookDllEvent");
 	if (hEventBack==0)hEventBack=CreateEvent(&SecAttr,TRUE,FALSE,"Global\\HookEventBack");
 	if (hEvent64==0) hEvent64=CreateEvent(&SecAttr,TRUE,FALSE,"Global\\HookDllEvent64");
@@ -1019,19 +1478,44 @@ BOOL APIENTRY DllMain( HANDLE hModule,
 	if (hEventOutput==0)hEventOutput=CreateEventA(&SecAttr,FALSE,FALSE,"Global\\HookEventOutput");
 	if (hEventHookBack==0)hEventHookBack=CreateEventA(&SecAttr,FALSE,FALSE,"Global\\HookDllAPC");
 	if (hEventHookBack64==0)hEventHookBack64=CreateEventA(&SecAttr,FALSE,FALSE,"Global\\HookDllAPC64");
+#endif
 	switch (ul_reason_for_call)
 	{
 	case DLL_PROCESS_ATTACH:
 		//GetAllUser();
-		
 		//DbgPrint("DLL load");
 		GetModuleFileName((HINSTANCE)hModule,CurrentDLLPath,255);
 		OSVERSIONINFOEX os; 
 		os.dwOSVersionInfoSize=sizeof(OSVERSIONINFOEX);  /*在调用函数前必须用sizeof(OSVERSIONINFOEXA)填充dwOSVersionInfoSize结构成员*/ 
-		if(GetVersionEx((OSVERSIONINFO *)&os) && os.dwMajorVersion>=6)                  /*调用GetVersionEx函数OSVERSIONINFOEX结构必须将指针类型强制转换*/
+		GetVersionEx((OSVERSIONINFO *)&os);
+		if( os.dwMajorVersion==6 && os.dwMajorVersion<=1 )   //if is vista/win 7
 		{ 
-					IsXPAbove=true;
+					IsNeedSHCreateProcess=true;
 		}
+
+#ifdef _WIN64
+		if(!stricmp("runas /trustlevel:0x20000 \"rundll32 FishHook64.dll GetAddressProc\"",GetCommandLineA()))
+#else
+		if(!stricmp("runas /trustlevel:0x20000 \"rundll32 FishHook32.dll GetAddressProc\"",GetCommandLineA()))
+#endif
+		{
+			break;
+		}
+#ifdef _WIN64
+		if (psInfo==0)
+		{
+			psm=(SharedMemory3264*)CreateSharedInfo(L"Global\\FishHookFileMappingObject");
+			if (!psm)
+			{			
+				return 1;
+			}
+			psInfo=&(psm->si);
+			//customHooks=sm->ch;
+			customHooks=psm->ch64;
+			PrintBuf=psm->PrintBuf;
+			//Msgbox("ENTER",psm->isWatching);
+		}
+#else
 		if (psInfo64==0)
 		{
 			SharedMemory3264* sm=(SharedMemory3264*)CreateSharedInfo(L"Global\\FishHookFileMappingObject");
@@ -1045,6 +1529,7 @@ BOOL APIENTRY DllMain( HANDLE hModule,
 			customHooks64=sm->ch64;
 			PrintBuf=sm->PrintBuf;
 		}
+#endif
 		hMod=hModule;
 		
 		HANDLE pid;
@@ -1115,10 +1600,17 @@ BOOL APIENTRY DllMain( HANDLE hModule,
 				for (int j=0;j<thInfo.count;j++)
 		        {
 					DLLid=thInfo.DLLid[j];
-					if (DLLid==9 && IsXPAbove && SHCreateProcess)
+					if (DLLid==9 && IsNeedSHCreateProcess && SHCreateProcess)
 					{
 						LoadLibrary("shell32.dll");
 						VOID* pF=SHCreateProcess;
+						Hook(&pF,hinfo[DLLid].pProc);
+						*hinfo[DLLid].ppOld=pF;
+					}
+					else if(DLLid==11 && AicLaunchAdminProcess_offset)
+					{
+						pAicLaunchAdminProcess=(PAicLaunchAdminProcess)((char*)LoadLibraryA("windows.storage.dll")+AicLaunchAdminProcess_offset);
+						VOID* pF=pAicLaunchAdminProcess;
 						Hook(&pF,hinfo[DLLid].pProc);
 						*hinfo[DLLid].ppOld=pF;
 					}
@@ -1132,15 +1624,23 @@ BOOL APIENTRY DllMain( HANDLE hModule,
 				//MessageBox(0,"Inject Success!","FishHook",64);
 				thInfo.count=0;		
 				FHPrint("CHILD IN\n");
+#ifdef _WIN64
+				long sus=psm->suspend64;
+				psm->suspend64=0;
+				HANDLE hE= hEventHookBack64;//OpenEvent(EVENT_ALL_ACCESS,FALSE,"Global\\HookDllAPC64");
+				SetEvent(hE);
+#else
 				long sus=psm->suspend32;
 				psm->suspend32=0;
+				HANDLE hE= hEventHookBack;//OpenEvent(EVENT_ALL_ACCESS,FALSE,"Global\\HookDllAPC");
+				SetEvent(hE);
+#endif
 				if (NeedToLoad)
 				{
 					//Msgbox("loaad",0);
 					LoadLibraryA(CurrentDLLPath);
 				}
-				HANDLE hE= hEventHookBack;//OpenEvent(EVENT_ALL_ACCESS,FALSE,"Global\\HookDllAPC");
-				SetEvent(hE);
+
 				if(sus)
 					SuspendThread(GetCurrentThread());
 				CreateThread(0,0,ReleaseHookProc,0,0,0);
@@ -1155,8 +1655,9 @@ BOOL APIENTRY DllMain( HANDLE hModule,
 			//Msgbox("32:",sizeof(SharedMemory3264));
 			if (IsDebugerExist==0)
 			{
-				psm->si.type=12312;
 				EnumKey();  //fix-me : Some say it may cause a deadlock
+#ifndef _WIN64
+				psm->si.type=12312;
 				psm->DebugerPid=CurrentPid;
 				CreateThread(NULL,0,WatchProcessProc,NULL,0,NULL);
 				if (GetSystemBits()==64)
@@ -1168,26 +1669,29 @@ BOOL APIENTRY DllMain( HANDLE hModule,
 
 					si.cb=sizeof(si);
 					si.wShowWindow =SW_SHOW;
-					si.dwFlags=STARTF_USESHOWWINDOW;			
+					si.dwFlags=STARTF_USESHOWWINDOW;
+					char path[MAX_PATH];
+					GetWindowsDirectory(path,MAX_PATH);
+					strcat_s(path,"\\sysnative\\rundll32.exe FishHook64.dll DLLEntry");
 					long trnp;
-#ifdef DBG 
-					trnp=CreateProcess(NULL,"D:\\Menooker\\vc\\FishHook\\FishHookHost64\\x64\\Debug\\FishHookHost64.exe",NULL,NULL,1,CREATE_NEW_CONSOLE,NULL,NULL,&si,&info);
-#else
-					trnp=CreateProcess(NULL,"FishHookHost64.exe",NULL,NULL,0,CREATE_NEW_CONSOLE,NULL,NULL,&si,&info);
-#endif
+					trnp=CreateProcess(NULL,path,NULL,NULL,0,CREATE_NEW_CONSOLE,NULL,NULL,&si,&info);
 					if (trnp)
 					{
 						hProcess64=info.hProcess;
 						psm->DebugerPid64=info.dwProcessId;
 					}
 				}
+#endif
 				EnableDebugPrivilege();
+#ifdef _WIN64
+				StartListening();
+#endif
 				IsDebugerExist=1;
 				IsDebuger=1;
 				if (GetModuleHandle("shell32.dll")==0)
 					LoadLibrary("shell32.dll");
 				
-				if(IsXPAbove)
+				if(IsNeedSHCreateProcess)
 				{
 					SHCreateProcess=(PSHCreateProcess)LocateFunc();
 					if(!SHCreateProcess)
@@ -1197,16 +1701,20 @@ BOOL APIENTRY DllMain( HANDLE hModule,
 			}
 			else
 			{
-					//Msgbox("32",GetCurrentProcessId());
+				if(AicLaunchAdminProcess_offset!=0)
+				{
 					MessageBox(0,"Another FishHook instant is running!","FishHook",64);
 					ExitProcess(0);
+				}
 			}
 
 		}
 
 		break;
 	case DLL_PROCESS_DETACH:
-
+#ifdef _WIN64
+		IsDebugerExist=0;
+#else
 		if (IsDebuger)
 		{
 			//__asm int 3
@@ -1220,7 +1728,7 @@ BOOL APIENTRY DllMain( HANDLE hModule,
 				CloseHandle(hMapFile);
 			}
 		}
-
+#endif
 		break;
 
 	}
@@ -1228,7 +1736,7 @@ BOOL APIENTRY DllMain( HANDLE hModule,
 }
 
 
-
+#ifndef _WIN64
 long __stdcall SetAPIHook64(long pid,long callproc,int *pDLLid,long num)
 {
 	if (psInfo64==0)
@@ -1276,27 +1784,42 @@ long __stdcall SetAPIHook64(long pid,long callproc,int *pDLLid,long num)
 	}
 }
 
-
+#endif
 
 
 long __stdcall SuspendProcessEx(long pid)
 {
+#ifdef _WIN64
+	if (psInfo==0)
+		return 100;
+#else
 	if (psInfo64==0)
 		return 100;
+#endif
 	HANDLE hMsInfo=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex64");
 	long ret=WaitForSingleObject(hMsInfo,1000);
 	if (ret==WAIT_TIMEOUT)
 	{
 		return 12;
 	}
-
+#ifdef _WIN64
+	psInfo->type=122;
+	psInfo->data.Param2.p1=pid;
+#else
 	psInfo64->type=122;
 	psInfo64->data.Param2.p1=pid;
+#endif
+
 
 	SetEvent(hEProcess32);
 
 	WaitForSingleObject(hEProcessBack32,-1);
 	ResetEvent(hEProcessBack32);
+#ifdef _WIN64
+	ret=psInfo->ret;
+#else
+	ret=psInfo64->ret;
+#endif
 	ret=psInfo64->ret;
 	ReleaseMutex(hMsInfo);
 	CloseHandle(hMsInfo);
@@ -1306,23 +1829,36 @@ long __stdcall SuspendProcessEx(long pid)
 
 long __stdcall ResumeProcessEx(long pid)
 {
+#ifdef _WIN64
+	if (psInfo==0)
+		return 100;
+#else
 	if (psInfo64==0)
 		return 100;
+#endif
 	HANDLE hMsInfo=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex64");
 	long ret=WaitForSingleObject(hMsInfo,1000);
 	if (ret==WAIT_TIMEOUT)
 	{
 		return 12;
 	}
-
+#ifdef _WIN64
+	psInfo->type=121;
+	psInfo->data.Param2.p1=pid;
+#else
 	psInfo64->type=121;
 	psInfo64->data.Param2.p1=pid;
-
+#endif
 	SetEvent(hEProcess32);
 
 	WaitForSingleObject(hEProcessBack32,-1);
 	ResetEvent(hEProcessBack32);
+#ifdef _WIN64
+	ret=psInfo->ret;
+#else
 	ret=psInfo64->ret;
+#endif
+
 	ReleaseMutex(hMsInfo);
 	CloseHandle(hMsInfo);
 	return ret;

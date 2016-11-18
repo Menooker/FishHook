@@ -56,8 +56,11 @@ int replace_IAT(const char *pDllName,const char *pApiName,void *pNew,PVOID * pOl
      VirtualProtect(mbi_thunk.BaseAddress,mbi_thunk.RegionSize, PAGE_READWRITE, &mbi_thunk.Protect); 
 
       *pOld =(PVOID) pImageThunkReal->u1.Function; 
+#ifdef _WIN64
+	  pImageThunkReal->u1.Function = (ULONGLONG)pNew;
+#else
       pImageThunkReal->u1.Function = (DWORD)pNew;
-      	
+#endif
      DWORD dwOldProtect; 
      VirtualProtect(mbi_thunk.BaseAddress, mbi_thunk.RegionSize, mbi_thunk.Protect, &dwOldProtect); 
 

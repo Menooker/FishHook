@@ -19,10 +19,9 @@
 		return 0;
  }
 
-
- long __stdcall GetSharedInfo()
+ void* __stdcall GetSharedInfo()
 {
-	return (long)&sInfo;
+	return &sInfo;
 }
 
 
@@ -213,4 +212,17 @@ HANDLE CreateNormalUserToken()
 	  
 	  return 0;		
 
+ }
+
+#ifdef _WIN64
+ void CALLBACK   DLLEntry(HWND hwnd, HINSTANCE hinst, LPWSTR lpszCmdLine,int nCmdShow)
+ {
+	 Sleep(-1);
+ }
+#endif
+
+ extern void* LocateAicLaunchAdminProcess();
+ void CALLBACK GetAddressProc(HWND hwnd, HINSTANCE hinst, LPWSTR lpszCmdLine,int nCmdShow)
+ {
+	 LocateAicLaunchAdminProcess();
  }

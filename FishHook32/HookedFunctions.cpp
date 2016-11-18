@@ -6,6 +6,16 @@
 #include <malloc.h>
 #include "internals.h"
 
+#ifdef _WIN64
+#define HOOKDLLEVENT ("Global\\HookDllEvent64")
+#define HOOK_SHARED_INFO_MUTEX ("Global\\HookSharedInfoMutex64")
+#define HOOK_DLL_MUTEX ("Global\\HookDllMutex64")
+#else
+#define HOOKDLLEVENT ("Global\\HookDllEvent")
+#define HOOK_SHARED_INFO_MUTEX ("Global\\HookSharedInfoMutex")
+#define HOOK_DLL_MUTEX ("Global\\HookDllMutex")
+#endif
+
  _vbaStrCmp oldstrcmp=NULL;
 
 ptrGetAddr oldGetProcAddress=0;
@@ -21,6 +31,7 @@ HINSTANCE (__stdcall *oldShellExecuteW)(HWND hwnd,LPCWSTR lpOperation,LPCWSTR lp
  ZWSETVALUEKEY oldZwSetValueKey=0;
  NTCREATEFILE oldNtCreateFile=0;
  PSHCreateProcess oldSHCreateProcess=0;
+ PAicLaunchAdminProcess oldAicLaunchAdminProcess=0;
 
 
 long __stdcall vbaStrCmp(PVOID str1,PVOID str2);
@@ -66,7 +77,7 @@ HINSTANCE __stdcall myShellExecuteW(HWND hwnd,LPCWSTR lpOperation,LPCWSTR lpFile
   _In_      ULONG EaLength
 );
  int __stdcall mySHCreateProcess(int p1,HANDLE hToken,wchar_t *lpApplicationName,wchar_t* lpCommandLine,DWORD dwCreationFlags,LPSECURITY_ATTRIBUTES lpProcessAttributes,LPSECURITY_ATTRIBUTES lpThreadAttributes,BOOL bInheritHandles,LPVOID lpEnvironment,LPCWSTR lpCurrentDirectory,LPSTARTUPINFOW lpStartupInfo,LPPROCESS_INFORMATION lpProcessInformation,int p2,char p3,int p4);
-
+ int __fastcall myAicLaunchAdminProcess(WCHAR *lpApplicationName, WCHAR *lpCommandLine, void* a3, DWORD dwCreationFlags, WCHAR *lpCurrentDirectory, HWND a6, LPSTARTUPINFOW lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation, DWORD *a9);
 DLLHookInfo hinfo[]={
 {"msvbvm60.dll","__vbaStrCmp",vbaStrCmp,(void**)&oldstrcmp},
 {"user32.dll","SwitchDesktop",mySwitchDesktop,(void**)&oldSwitchDesktop},
@@ -74,11 +85,12 @@ DLLHookInfo hinfo[]={
 {"kernel32.dll","CreateProcessW",myCreateProcessW,(void**)&oldCreateProcessW},
 {"user32.dll","MessageBoxA",myMessageBoxA,(void**)&oldMessageBoxA},
 {"user32.dll","MessageBoxW",myMessageBoxW,(void**)&oldMessageBoxW},
-{"kernel32.dll","CreateProcessInternalW",myCreateProcessInternalW,(void**)&oldCreateProcessInternalW},
+{"kernelbase.dll","CreateProcessInternalW",myCreateProcessInternalW,(void**)&oldCreateProcessInternalW},
 {"shell32.dll","ShellExecuteExW",myShellExecuteExW,(VOID**)&oldShellExecuteExW},
 {"ntdll.dll","ZwSetValueKey",myZwSetValueKey,(VOID**)&oldZwSetValueKey},
 {"shell32.dll","_SHCreateProcess",mySHCreateProcess,(VOID**)&oldSHCreateProcess},
-{"ntdll.dll","NtCreateFile",myNtCreateFile,(VOID**)&oldNtCreateFile}
+{"ntdll.dll","NtCreateFile",myNtCreateFile,(VOID**)&oldNtCreateFile},
+{"windows.storage.dll","AicLaunchAdminProcess",myAicLaunchAdminProcess,(VOID**)&oldAicLaunchAdminProcess},
 //{"ntdll.dll","NtCreateProcessEx",myNtCreateProcessEx,(void**)&oldNtCreateProcessEx}
 };
 
@@ -91,6 +103,54 @@ extern "C" long FHPrint(char *format,...);
  extern "C" long __stdcall SuspendProcessEx(long pid);
  extern  long ResumeProcess(DWORD dwProcessId,long selftid);
  extern  long SuspendProcess(DWORD dwProcessId,long selftid);
+#ifdef _WIN64
+ long __stdcall InsertDLL64(DWORD pid)
+{
+				HANDLE hMsInfo64=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex64");
+				WaitForSingleObject(hMsInfo64,-1);
+				psInfo->type=92;
+				psInfo->pid=pid;
+
+
+				SetEvent(hEProcess);
+				WaitForSingleObject(hEProcessBack,-1);
+				ResetEvent(hEProcessBack);
+				ReleaseMutex(hMsInfo64);
+				CloseHandle(hMsInfo64);
+				return psInfo->ret;
+}
+long __stdcall SetAPIHook64(long pid,int *pDLLid,long num)
+{
+	if (psInfo==0)
+		return 100;
+	if (num<=20)
+	{
+		HANDLE hMsInfo=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex64");
+		long ret=WaitForSingleObject(hMsInfo,1000);
+		if (ret==WAIT_TIMEOUT)
+		{
+			return 12;
+		}
+
+		psInfo->type=109;
+		psInfo->pid=pid;
+		psInfo->data.intArray[0]=num;
+		CopyMemory(&(psInfo->data.intArray[1]),pDLLid,num*sizeof(int));
+		SetEvent(hEProcess);
+
+		WaitForSingleObject(hEProcessBack,-1);
+		ResetEvent(hEProcessBack);
+		ret=psInfo->ret;
+		ReleaseMutex(hMsInfo);
+		CloseHandle(hMsInfo);
+		return ret;
+	}
+	else
+	{
+		return 13;
+	}
+}
+#else
  long InsertDLL32(DWORD pid)
  {
 				HANDLE hMsInfo64=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex64");
@@ -106,7 +166,7 @@ extern "C" long FHPrint(char *format,...);
 				CloseHandle(hMsInfo64);
 				return psInfo64->ret;
  }
-
+#endif
  long UnHook(void ** ppFun,PVOID pDetour)
 {
  //       DetourRestoreAfterWith();
@@ -220,7 +280,7 @@ long __stdcall vbaStrCmp(PVOID str1,PVOID str2)
 	wcsncpy((wchar_t*)(sInfo.data.strd.str2) ,(WCHAR*)str2,sizeof(sInfo.data.strd.str2)/2-1);
 	sInfo.type =0;
 	sInfo.pid=CurrentPid;
-	HANDLE hE= OpenEvent(EVENT_ALL_ACCESS,FALSE,"Global\\HookDllEvent");
+	HANDLE hE= OpenEvent(EVENT_ALL_ACCESS,FALSE,HOOKDLLEVENT);
     SetEvent(hE);
 	CloseHandle(hE);
 	if (breakpoint)MessageBoxW(NULL,(WCHAR *)str1,(WCHAR *) str2,64);
@@ -234,7 +294,7 @@ long __stdcall myDllFunctionCall(DLLInfo *pDll)
 	strncpy(sInfo.data.strd.str1 ,pDll->ModuleName,sizeof(sInfo.data.strd.str1)-1 );
 	strncpy(sInfo.data.strd.str2 ,pDll->FunctionName,sizeof(sInfo.data.strd.str2)-1 );
 	//sInfo.type =2;
-	HANDLE hE= OpenEvent(EVENT_ALL_ACCESS,FALSE,"Global\\HookDllEvent");
+	HANDLE hE= OpenEvent(EVENT_ALL_ACCESS,FALSE,HOOKDLLEVENT);
     SetEvent(hE);
 	CloseHandle(hE);
 	if (breakpoint)		MessageBox(NULL,pDll->ModuleName,pDll->FunctionName,64);
@@ -266,7 +326,7 @@ long __stdcall mySwitchDesktop(long h)
     sInfo.data.Param2.p1=h;
 	sInfo.type =1799;
 	sInfo.pid=CurrentPid;
-	HANDLE hE= OpenEvent(EVENT_ALL_ACCESS,FALSE,"Global\\HookDllEvent");
+	HANDLE hE= OpenEvent(EVENT_ALL_ACCESS,FALSE,HOOKDLLEVENT);
     SetEvent(hE);
 	CloseHandle(hE);
 	//if (breakpoint)		MessageBox(NULL,pDll->ModuleName,pDll->FunctionName,64);
@@ -295,7 +355,9 @@ long __stdcall mySwitchDesktop(long h)
 					
 		}	
 //MessageBoxW(NULL,L"Released",L"ha",64);
+#ifndef _WIN64
 		CloseHandle(h[1]);
+#endif
 		CloseHandle(h[0]);
 		delete []h;
 		return 1;
@@ -318,7 +380,7 @@ long __stdcall mySwitchDesktop(long h)
 	 char DLLPath[255];
 	 GetModuleFileName((HINSTANCE)hMod,DLLPath,255);
 	 ///////////////////////////////////
-	 HANDLE hM=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex");
+	 HANDLE hM=CreateMutex(&SecAttr,FALSE,HOOK_SHARED_INFO_MUTEX);
 	 WaitForSingleObject(hM,-1);
 	 sInfo.type=2;
 	 sInfo.pid=CurrentPid;
@@ -343,12 +405,16 @@ long __stdcall mySwitchDesktop(long h)
 	 //////////////////////////
 	 HANDLE hMutex = CreateMutex(&SecAttr,FALSE,"Global\\HookDllMutex");
 	 WaitForSingleObject(hMutex,-1);
-	 MessageBoxA(NULL,lpCommandLine,"ha",64);
+	 //MessageBoxA(NULL,lpCommandLine,"ha",64);
 	 thInfo.count=2;
 	 thInfo.DLLid[0]=3;
 	 thInfo.DLLid[1]=2;
 	 NeedToLoad=0;
+#ifdef _WIN64
+	 HANDLE hE=hEventHookBack64;
+#else
 	 HANDLE hE=CreateEventA(&SecAttr,FALSE,FALSE,"Global\\HookDllAPC");
+#endif
 
 	 long rtn=0;
 	 long ret= DetourCreateProcessWithDllA(lpApplicationName,lpCommandLine,lpProcessAttributes,lpThreadAttributes,
@@ -383,7 +449,9 @@ long __stdcall mySwitchDesktop(long h)
 	 {
 		    ReleaseMutex(hMutex);
 			CloseHandle(hMutex);
+#ifndef WIN64
 			CloseHandle(hE);
+#endif
 			ret= oldCreateProcessA(lpApplicationName,lpCommandLine,lpProcessAttributes,lpThreadAttributes,
               bInheritHandles,dwCreationFlags, lpEnvironment,lpCurrentDirectory,lpStartupInfo,
               lpProcessInformation);
@@ -400,7 +468,7 @@ long __stdcall mySwitchDesktop(long h)
 
 }
 
-  BOOL WINAPI myCreateProcessW(LPCWSTR lpApplicationName,LPWSTR lpCommandLine,LPSECURITY_ATTRIBUTES lpProcessAttributes, LPSECURITY_ATTRIBUTES lpThreadAttributes,BOOL bInheritHandles,DWORD dwCreationFlags,LPVOID lpEnvironment,LPCWSTR lpCurrentDirectory,LPSTARTUPINFOW lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation)
+  int WINAPI myCreateProcessW(LPCWSTR lpApplicationName,LPWSTR lpCommandLine,LPSECURITY_ATTRIBUTES lpProcessAttributes, LPSECURITY_ATTRIBUTES lpThreadAttributes,BOOL bInheritHandles,DWORD dwCreationFlags,LPVOID lpEnvironment,LPCWSTR lpCurrentDirectory,LPSTARTUPINFOW lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation)
 { 
 
 
@@ -408,7 +476,7 @@ long __stdcall mySwitchDesktop(long h)
 	 GetModuleFileName((HINSTANCE)hMod,DLLPath,255);
 
 	 	 ///////////////////////////////////
-	 HANDLE hM=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex");
+	 HANDLE hM=CreateMutex(&SecAttr,FALSE,HOOK_SHARED_INFO_MUTEX);
 	 WaitForSingleObject(hM,-1);
 	 
 	 sInfo.type=3;
@@ -434,17 +502,19 @@ long __stdcall mySwitchDesktop(long h)
 	 //CloseHandle(hEE2);
 	 //////////////////////////
 
-	 HANDLE hMutex = CreateMutex(&SecAttr,FALSE,"Global\\HookDllMutex");
+	 HANDLE hMutex = CreateMutex(&SecAttr,FALSE,HOOK_DLL_MUTEX);
 	 WaitForSingleObject(hMutex,-1);
-	 
+
      /*thInfo.count=2;
 	 thInfo.DLLid[0]=3;
 	 thInfo.DLLid[1]=2;
 	 NeedToLoad=0;*/
 	 thInfo=autoHook;
-
+#ifdef _WIN64
+	 HANDLE hE=hEventHookBack64;
+#else
 	 HANDLE hE=CreateEvent(&SecAttr,FALSE,FALSE,"Global\\HookDllAPC");
-
+#endif
 	 long rtn=0;
 	 long ret= DetourCreateProcessWithDllW(lpApplicationName,lpCommandLine,lpProcessAttributes,lpThreadAttributes,
               bInheritHandles,dwCreationFlags|CREATE_SUSPENDED, lpEnvironment,lpCurrentDirectory,lpStartupInfo,
@@ -472,8 +542,10 @@ long __stdcall mySwitchDesktop(long h)
 			{
 				ReleaseMutex(hMutex);
 			}
-			CloseHandle(hMutex);	 	 
+			CloseHandle(hMutex);
+#ifndef _WIN64
 		    CloseHandle(hE);
+#endif
 			/*HANDLE *EM=new HANDLE [2];
 			EM[0]=hE;
 			EM[1]=hMutex;
@@ -489,10 +561,49 @@ long __stdcall mySwitchDesktop(long h)
 			ret= oldCreateProcessW(lpApplicationName,lpCommandLine,lpProcessAttributes,lpThreadAttributes,
               bInheritHandles,dwCreationFlags|CREATE_SUSPENDED, lpEnvironment,lpCurrentDirectory,lpStartupInfo,
               lpProcessInformation);
+#ifdef _WIN64
+			if(IsWow64(lpProcessInformation->hProcess)==1)
+			{
+				HANDLE hMsInfo64=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex64");
+				WaitForSingleObject(hMsInfo64,-1);
+				psInfo->type=94;
+				psInfo->pid=lpProcessInformation->dwProcessId;
+				psInfo->data.Param2.p2=(long)hMapFile;
+				if (!(dwCreationFlags & CREATE_SUSPENDED)) 
+				{
+					psInfo->data.Param2.p1=1;
+				}
+				else
+				{
+					psInfo->data.Param2.p1=0;
+				}
+
+				SetEvent(hEProcess32);
+				WaitForSingleObject(hEProcessBack32,-1);
+				ResetEvent(hEProcessBack32);
+				ReleaseMutex(hMsInfo64);
+				CloseHandle(hMsInfo64);
+				if (!(dwCreationFlags & CREATE_SUSPENDED)) 
+			    {
+				  ResumeThread(lpProcessInformation->hThread);
+			    }
+			}
+			else
+			{
+				if (!(dwCreationFlags & CREATE_SUSPENDED)) 
+			    {
+				  ResumeThread(lpProcessInformation->hThread);
+			    }
+				WaitForInputIdle(lpProcessInformation->hProcess,-1);
+				int temp[2]={3,2};
+				SetIATHookByAPC(lpProcessInformation->hProcess,(HANDLE)lpProcessInformation->dwProcessId,(void*)1,temp,2);
+				
+			}
+#else
 			if (IsWow64ProcessEx(lpProcessInformation->hProcess)==1)
 			{// 64-bit
 
-				HANDLE hMsInfo64=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex");
+				HANDLE hMsInfo64=CreateMutex(&SecAttr,FALSE,HOOK_SHARED_INFO_MUTEX);
 				WaitForSingleObject(hMsInfo64,-1);
 				psInfo64->type=93;
 				psInfo64->pid=lpProcessInformation->dwProcessId;
@@ -524,6 +635,8 @@ long __stdcall mySwitchDesktop(long h)
 			{
 				  ResumeThread(lpProcessInformation->hThread);
 			}
+	
+#endif
 			return ret;
 			
 	 } 
@@ -536,7 +649,6 @@ long __stdcall mySwitchDesktop(long h)
   //printf("%s\t%d\r\n",__FUNCTION__,__LINE__);
   
    return oldMessageBoxA(hWnd,lpText,"不好意思,hook到了!",uType); 
-	 return 0;
   //else
   // return MessageBox(hWnd,lpText,lpCaption,uType); ;
  }
@@ -567,7 +679,8 @@ long __stdcall mySwitchDesktop(long h)
  
  BOOL __stdcall myShellExecuteExW(  _Inout_  SHELLEXECUTEINFOW *pExecInfo)
  {
-
+	 return 0;
+/*
 	 if (wcsicmp(pExecInfo->lpVerb,L"runas")==0)
 	 {	 long ret;
 		 pExecInfo->fMask|=SEE_MASK_NOCLOSEPROCESS;
@@ -598,7 +711,7 @@ long __stdcall mySwitchDesktop(long h)
 	 else
 	 {
 		 return oldShellExecuteExW(pExecInfo);
-	 }
+	 }*/
 
  }
 
@@ -688,7 +801,7 @@ HANDLE RunAsAdmin( HWND hWnd, WCHAR* pFile,WCHAR* lpParam,WCHAR* pDir)
 
 void NotifyProcess(WCHAR* lpApplicationName,WCHAR* lpCommandLine,int type,int pidthis,int pidnew)
 {
-				 HANDLE	 hM=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex");
+				 HANDLE	 hM=CreateMutex(&SecAttr,FALSE,HOOK_SHARED_INFO_MUTEX);
 				 WaitForSingleObject(hM,-1);
 				 sInfo.pid=pidthis;
 				 sInfo.type=type;
@@ -732,21 +845,21 @@ void NotifyProcess(WCHAR* lpApplicationName,WCHAR* lpCommandLine,int type,int pi
  PHANDLE hNewToken 
 )
 {
-
+	MessageBox(0,"IN","",64);
 	 if ((dwCreationFlags & 0x10000000)) 
 	 {
 		 return oldCreateProcessInternalW(hToken,lpApplicationName,lpCommandLine,lpProcessAttributes,lpThreadAttributes,
               1,dwCreationFlags & 0x0FFFFFFF, lpEnvironment,lpCurrentDirectory,lpStartupInfo,
               lpProcessInformation,hNewToken);
 	 }
-
+	 MessageBox(0,"pass1","",64);
 	 char* DLLPath=CurrentDLLPath;
 
 	 //int temp[3]={6,7,8};
 	 if(psm && psm->isWatching)
 	 {
 	 	 ///////////////////////////////////
-		 HANDLE hM=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex");
+		 HANDLE hM=CreateMutex(&SecAttr,FALSE,HOOK_SHARED_INFO_MUTEX);
 		 WaitForSingleObject(hM,-1);
 	 
 		 sInfo.type=3;
@@ -787,7 +900,7 @@ void NotifyProcess(WCHAR* lpApplicationName,WCHAR* lpCommandLine,int type,int pi
 		 //////////////////////////
 	 }
 
-	 HANDLE hMutex = CreateMutex(&SecAttr,FALSE,"Global\\HookDllMutex");
+	 HANDLE hMutex = CreateMutex(&SecAttr,FALSE,HOOK_DLL_MUTEX);
 	 WaitForSingleObject(hMutex,-1);
 	 PushHandles();
      /*thInfo.count=3;
@@ -796,10 +909,15 @@ void NotifyProcess(WCHAR* lpApplicationName,WCHAR* lpCommandLine,int type,int pi
 	 thInfo.DLLid[2]=8;*/
 	 thInfo=autoHook;
 	 NeedToLoad=0;
+#ifdef _WIN64
+	 hMu64=hMapFile;
+	 HANDLE hE=hEventHookBack64;
+#else
 	 hMu=hMapFile;
-	 
-	 //HANDLE hE=CreateEvent(&SecAttr,FALSE,FALSE,"Global\\HookDllAPC");
 	 HANDLE hE=hEventHookBack;
+#endif
+	 //HANDLE hE=CreateEvent(&SecAttr,FALSE,FALSE,"Global\\HookDllAPC");
+	 
 	 long rtn=0;
 	 long ret;
 	 HANDLE hmToken=MakeNormalToken(hToken);
@@ -808,14 +926,14 @@ void NotifyProcess(WCHAR* lpApplicationName,WCHAR* lpCommandLine,int type,int pi
 		 FHPrint("Token error!!!\n");
 		 return 0;
 	 }
-
+	 MessageBox(0,"pass2","",64);
 	 ret= CreateProcessInternalWithDllW(hmToken,lpApplicationName,lpCommandLine,lpProcessAttributes,lpThreadAttributes, 
               1,dwCreationFlags|CREATE_SUSPENDED, lpEnvironment,lpCurrentDirectory,lpStartupInfo,
               lpProcessInformation,hNewToken,DLLPath,oldCreateProcessInternalW);
 	 long err=GetLastError();
 	 //Msgbox("err",err);
 	 if (ret)
-	 {
+	 {		
 			CloseHandle(hmToken);
 			//FHPrint("ININININININNININININININI %d\n\n",hMu);
 			int i;
@@ -827,7 +945,11 @@ void NotifyProcess(WCHAR* lpApplicationName,WCHAR* lpCommandLine,int type,int pi
 					break;
 				}
 			}
+#ifdef _WIN64
+			psm->suspend64=1;
+#else
 			psm->suspend32=1;
+#endif
 			ResumeThread(lpProcessInformation->hThread);
 			WaitForSingleObject(hE,-1); //fix-me : check if it's a time-out  // to 2000
 			toHookPid[i]=0;
@@ -850,14 +972,33 @@ void NotifyProcess(WCHAR* lpApplicationName,WCHAR* lpCommandLine,int type,int pi
 	 {
 		    ReleaseMutex(hMutex);
 			CloseHandle(hMutex);
-
+			MessageBox(0,"HOOK","",64);
 
 			ret= oldCreateProcessInternalW(hmToken,lpApplicationName,lpCommandLine,lpProcessAttributes,lpThreadAttributes,
               1,dwCreationFlags|CREATE_SUSPENDED, lpEnvironment,lpCurrentDirectory,lpStartupInfo,
               lpProcessInformation,hNewToken);
 			CloseHandle(hmToken);
+			MessageBox(0,"pass3","",64);
 			if(!ret) return ret;
 
+#ifdef _WIN64
+			if(IsWow64(lpProcessInformation->hProcess)==1)
+			{
+				HANDLE hMsInfo64=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex64");
+				WaitForSingleObject(hMsInfo64,-1);
+
+				psInfo->type=94;
+				psInfo->pid=lpProcessInformation->dwProcessId;
+				psInfo->data.Param2.p2=(long)hMapFile;
+				psInfo->data.Param2.p1=lpProcessInformation->dwThreadId;
+
+				SetEvent(hEProcess32);
+				WaitForSingleObject(hEProcessBack32,-1);
+				ResetEvent(hEProcessBack32);
+				ReleaseMutex(hMsInfo64);
+				CloseHandle(hMsInfo64);
+			}
+#else
 			if (IsWow64ProcessEx(lpProcessInformation->hProcess)==1)
 			{// 64-bit
 
@@ -883,6 +1024,7 @@ void NotifyProcess(WCHAR* lpApplicationName,WCHAR* lpCommandLine,int type,int pi
 				CloseHandle(hMsInfo64);
 
 			}
+#endif
 			else 
 			{
 				//we should never run into here
@@ -1003,7 +1145,7 @@ int c=0;
 	if (!InIgnoreList(pinfo->Name))
 	{
 //		 pinfo->Name[lcmp]=temp;
-		 HANDLE hM=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex");
+		 HANDLE hM=CreateMutex(&SecAttr,FALSE,HOOK_SHARED_INFO_MUTEX);
 		 WaitForSingleObject(hM,-1);
 	 
 		 sInfo.type=8;
@@ -1050,7 +1192,7 @@ NTSTATUS myNtCreateFile(
 {
 	//if(CreateDisposition==FILE_CREATE)
 	{
-			 HANDLE hM=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex");
+			 HANDLE hM=CreateMutex(&SecAttr,FALSE,HOOK_SHARED_INFO_MUTEX);
 		 WaitForSingleObject(hM,-1);
 	 
 		 sInfo.type=10;
@@ -1125,7 +1267,7 @@ int __stdcall mySHCreateProcess(int p1,HANDLE hToken,wchar_t *lpApplicationName,
 	 if(psm && psm->isWatching)
 	 {
 	 	 ///////////////////////////////////
-		 HANDLE hM=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex");
+		 HANDLE hM=CreateMutex(&SecAttr,FALSE,HOOK_SHARED_INFO_MUTEX);
 		 WaitForSingleObject(hM,-1);
 	 
 		 sInfo.type=3;
@@ -1177,7 +1319,11 @@ int __stdcall mySHCreateProcess(int p1,HANDLE hToken,wchar_t *lpApplicationName,
 	 if (lpProcessInformation) {
 			CopyMemory(lpProcessInformation, &pi, sizeof(pi));
 	 }
+#ifdef _WIN64
+	 if(IsWow64(pi.hProcess)==0)
+#else
 	 if(IsWow64ProcessEx(pi.hProcess)==0)
+#endif
 	 {//32 bit
 		/*LPCSTR rlpDlls[2];
 		DWORD nDlls = 0;
@@ -1190,8 +1336,11 @@ int __stdcall mySHCreateProcess(int p1,HANDLE hToken,wchar_t *lpApplicationName,
 			TerminateProcess(pi.hProcess, ~0u);
 			return FALSE;
 		}*/
-
+#ifdef _WIN64
+		 if (!InsertDLL64(pi.dwProcessId))
+#else
 		 if (!InsertDLL32(pi.dwProcessId))
+#endif
 		 {
 			 Msgbox("无法进入此进程 pid ",pi.dwProcessId);
 		 };
@@ -1199,7 +1348,7 @@ int __stdcall mySHCreateProcess(int p1,HANDLE hToken,wchar_t *lpApplicationName,
 
 
 
-		 HANDLE hMutex = CreateMutex(&SecAttr,FALSE,"Global\\HookDllMutex");
+		 HANDLE hMutex = CreateMutex(&SecAttr,FALSE,HOOK_DLL_MUTEX);
 		 WaitForSingleObject(hMutex,-1);
 		 PushHandles();
 
@@ -1209,10 +1358,13 @@ int __stdcall mySHCreateProcess(int p1,HANDLE hToken,wchar_t *lpApplicationName,
 		 thInfo.DLLid[2]=8;*/
 		 thInfo=autoHook;
 		 NeedToLoad=0;
+#ifdef _WIN64
+		 hMu64=hMapFile;
+		 HANDLE hE=hEventHookBack64;
+#else
 		 hMu=hMapFile;
-		 
-		 //HANDLE hE=CreateEvent(&SecAttr,FALSE,FALSE,"Global\\HookDllAPC");
 		 HANDLE hE=hEventHookBack;
+#endif
 		 int i;
 			for (i=0;i<128;i++)
 			{
@@ -1222,7 +1374,11 @@ int __stdcall mySHCreateProcess(int p1,HANDLE hToken,wchar_t *lpApplicationName,
 					break;
 				}
 			}
+#ifdef _WIN64
+			psm->suspend64=1;
+#else
 			psm->suspend32=1;
+#endif
 			ResumeThread(pi.hThread);
 			WaitForSingleObject(hE,-1); //fix-me to 2000
 			toHookPid[i]=0;
@@ -1238,6 +1394,29 @@ int __stdcall mySHCreateProcess(int p1,HANDLE hToken,wchar_t *lpApplicationName,
 
 	 }
 	 else
+#ifdef _WIN64
+	 {
+				HANDLE hMsInfo64=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex64");
+				WaitForSingleObject(hMsInfo64,-1);
+				PushHandles();  // fix-me!!!! - not protected operation in shared memory!!!!
+				psInfo->type=94;
+				psInfo->pid=lpProcessInformation->dwProcessId;
+				psInfo->data.Param2.p2=(long)hMapFile;
+				psInfo->data.Param2.p1=pi.dwThreadId;
+
+				SetEvent(hEProcess32);
+				WaitForSingleObject(hEProcessBack32,-1);
+				ResetEvent(hEProcessBack32);
+				ReleaseMutex(hMsInfo64);
+				CloseHandle(hMsInfo64);
+				if (!(dwCreationFlags & CREATE_SUSPENDED)) 
+			    {
+					if(!ResumeThreadWhenSuspended(pi.hThread))
+						FHPrint("Error when resuming the main thread of PID: %d",pi.dwProcessId);
+
+			    }
+	 }
+#else
 	 {
 				HANDLE hMsInfo64=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex64");
 				WaitForSingleObject(hMsInfo64,-1);
@@ -1258,7 +1437,18 @@ int __stdcall mySHCreateProcess(int p1,HANDLE hToken,wchar_t *lpApplicationName,
 						FHPrint("Error when resuming the main thread of PID: %d",pi.dwProcessId);
 			    }
 	 }
+#endif
 	 if(psm && psm->isWatching)
 		 NotifyProcess((WCHAR*)lpApplicationName,(WCHAR*)lpCommandLine,10,CurrentPid,lpProcessInformation->dwProcessId);
 	 return ret;
+}
+
+
+int __fastcall myAicLaunchAdminProcess(WCHAR *lpApplicationName, WCHAR *lpCommandLine, void* a3, DWORD dwCreationFlags, WCHAR *lpCurrentDirectory, HWND a6, LPSTARTUPINFOW lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation, DWORD *a9)
+{
+	MessageBoxW(0,(WCHAR*)lpApplicationName,(WCHAR*)lpCommandLine,64);
+	Msgbox("a3",(long)dwCreationFlags);
+	int ret= oldAicLaunchAdminProcess(lpApplicationName,lpCommandLine,a3,dwCreationFlags | CREATE_SUSPENDED,lpCurrentDirectory,a6,lpStartupInfo,lpProcessInformation,a9);
+	Msgbox("a4",(long)dwCreationFlags);
+	return ret;
 }
