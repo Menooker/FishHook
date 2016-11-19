@@ -845,14 +845,12 @@ void NotifyProcess(WCHAR* lpApplicationName,WCHAR* lpCommandLine,int type,int pi
  PHANDLE hNewToken 
 )
 {
-	MessageBox(0,"IN","",64);
 	 if ((dwCreationFlags & 0x10000000)) 
 	 {
 		 return oldCreateProcessInternalW(hToken,lpApplicationName,lpCommandLine,lpProcessAttributes,lpThreadAttributes,
               1,dwCreationFlags & 0x0FFFFFFF, lpEnvironment,lpCurrentDirectory,lpStartupInfo,
               lpProcessInformation,hNewToken);
 	 }
-	 MessageBox(0,"pass1","",64);
 	 char* DLLPath=CurrentDLLPath;
 
 	 //int temp[3]={6,7,8};
@@ -926,7 +924,6 @@ void NotifyProcess(WCHAR* lpApplicationName,WCHAR* lpCommandLine,int type,int pi
 		 FHPrint("Token error!!!\n");
 		 return 0;
 	 }
-	 MessageBox(0,"pass2","",64);
 	 ret= CreateProcessInternalWithDllW(hmToken,lpApplicationName,lpCommandLine,lpProcessAttributes,lpThreadAttributes, 
               1,dwCreationFlags|CREATE_SUSPENDED, lpEnvironment,lpCurrentDirectory,lpStartupInfo,
               lpProcessInformation,hNewToken,DLLPath,oldCreateProcessInternalW);
@@ -972,13 +969,11 @@ void NotifyProcess(WCHAR* lpApplicationName,WCHAR* lpCommandLine,int type,int pi
 	 {
 		    ReleaseMutex(hMutex);
 			CloseHandle(hMutex);
-			MessageBox(0,"HOOK","",64);
 
 			ret= oldCreateProcessInternalW(hmToken,lpApplicationName,lpCommandLine,lpProcessAttributes,lpThreadAttributes,
               1,dwCreationFlags|CREATE_SUSPENDED, lpEnvironment,lpCurrentDirectory,lpStartupInfo,
               lpProcessInformation,hNewToken);
 			CloseHandle(hmToken);
-			MessageBox(0,"pass3","",64);
 			if(!ret) return ret;
 
 #ifdef _WIN64
@@ -1446,9 +1441,181 @@ int __stdcall mySHCreateProcess(int p1,HANDLE hToken,wchar_t *lpApplicationName,
 
 int __fastcall myAicLaunchAdminProcess(WCHAR *lpApplicationName, WCHAR *lpCommandLine, void* a3, DWORD dwCreationFlags, WCHAR *lpCurrentDirectory, HWND a6, LPSTARTUPINFOW lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation, DWORD *a9)
 {
-	MessageBoxW(0,(WCHAR*)lpApplicationName,(WCHAR*)lpCommandLine,64);
-	Msgbox("a3",(long)dwCreationFlags);
-	int ret= oldAicLaunchAdminProcess(lpApplicationName,lpCommandLine,a3,dwCreationFlags | CREATE_SUSPENDED,lpCurrentDirectory,a6,lpStartupInfo,lpProcessInformation,a9);
-	Msgbox("a4",(long)dwCreationFlags);
+	char* DLLPath=CurrentDLLPath;
+	//int temp[3]={6,9,8};
+	if(psm && psm->isWatching)
+	{
+		///////////////////////////////////
+		HANDLE hM=CreateMutex(&SecAttr,FALSE,HOOK_SHARED_INFO_MUTEX);
+		WaitForSingleObject(hM,-1);
+	 
+		sInfo.type=3;
+		sInfo.pid=CurrentPid;
+		if (lpApplicationName!=NULL)
+		{
+			wcsncpy((wchar_t*)sInfo.data.strd.str1 ,lpApplicationName,sizeof(sInfo.data.strd.str1)/2-1);
+		}
+		else 
+		{
+		sInfo.data.strd.str1[0]=0;
+		sInfo.data.strd.str1[1]=0;
+		}
+		if (lpCommandLine!=NULL)
+		{
+			wcsncpy((wchar_t*)sInfo.data.strd.str2 ,lpCommandLine,sizeof(sInfo.data.strd.str2)/2-1);
+		}
+		else 
+		{
+		sInfo.data.strd.str2[0]=0;
+		sInfo.data.strd.str2[1]=0;
+		}
+	 
+		SetEvent(hEvent);
+		WaitForSingleObject(hEventBack,-1);
+		ResetEvent(hEventBack);
+		if (sInfo.ret==0)
+		{
+
+		ReleaseMutex(hM);
+		CloseHandle(hM);
+		//CloseHandle(hEE2);
+		return 0;
+		}
+		ReleaseMutex(hM);
+		CloseHandle(hM);
+		//CloseHandle(hEE2);
+		//////////////////////////
+	}
+	PROCESS_INFORMATION pi;  
+	long ret= oldAicLaunchAdminProcess(lpApplicationName,lpCommandLine,a3,dwCreationFlags | CREATE_SUSPENDED,
+		lpCurrentDirectory,a6,lpStartupInfo,&pi,a9);
+	// fix-me: we don't use token modification here because this routine may switch the user account of the child process... IS THERE AN ALTERNATIVE ? 
+	if (ret)
+	{
+		return ret;
+	}
+	if (lpProcessInformation) {
+		CopyMemory(lpProcessInformation, &pi, sizeof(pi));
+	}
+	#ifdef _WIN64
+	if(IsWow64(pi.hProcess)==0)
+	#else
+	if(IsWow64ProcessEx(pi.hProcess)==0)
+	#endif
+	{//32 bit
+	/*LPCSTR rlpDlls[2];
+	DWORD nDlls = 0;
+	if (CurrentDLLPath != NULL) {
+		rlpDlls[nDlls++] =CurrentDLLPath;
+	}
+
+	if (!DetourUpdateProcessWithDll(pi.hProcess, rlpDlls, nDlls)) {
+		Msgbox("errer",0);
+		TerminateProcess(pi.hProcess, ~0u);
+		return FALSE;
+	}*/
+	#ifdef _WIN64
+		if (!InsertDLL64(pi.dwProcessId))
+	#else
+		if (!InsertDLL32(pi.dwProcessId))
+	#endif
+		{
+			Msgbox("无法进入此进程 pid ",pi.dwProcessId);
+		};
+
+
+
+		HANDLE hMutex = CreateMutex(&SecAttr,FALSE,HOOK_DLL_MUTEX);
+		WaitForSingleObject(hMutex,-1);
+		PushHandles();
+
+		/*thInfo.count=3;
+		thInfo.DLLid[0]=6;
+		thInfo.DLLid[1]=9;
+		thInfo.DLLid[2]=8;*/
+		thInfo=autoHook;
+		NeedToLoad=0;
+	#ifdef _WIN64
+		hMu64=hMapFile;
+		HANDLE hE=hEventHookBack64;
+	#else
+		hMu=hMapFile;
+		HANDLE hE=hEventHookBack;
+	#endif
+		int i;
+		for (i=0;i<128;i++)
+		{
+			if (toHookPid[i]==0)
+			{
+				toHookPid[i]=(HANDLE)pi.dwProcessId;
+				break;
+			}
+		}
+	#ifdef _WIN64
+		psm->suspend64=1;
+	#else
+		psm->suspend32=1;
+	#endif
+		ResumeThread(pi.hThread);
+		WaitForSingleObject(hE,-1); //fix-me to 2000
+		toHookPid[i]=0;
+		ReleaseMutex(hMutex);
+		CloseHandle(hMutex);
+		if (!(dwCreationFlags & CREATE_SUSPENDED)) 
+		{	
+			if(!ResumeThreadWhenSuspended(pi.hThread))
+				FHPrint("Error when resuming the main thread of PID: %d",pi.dwProcessId);
+		}
+				 	 
+		//CloseHandle(hE);
+
+	}
+	else
+	#ifdef _WIN64
+	{
+			HANDLE hMsInfo64=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex64");
+			WaitForSingleObject(hMsInfo64,-1);
+			PushHandles();  // fix-me!!!! - not protected operation in shared memory!!!!
+			psInfo->type=94;
+			psInfo->pid=lpProcessInformation->dwProcessId;
+			psInfo->data.Param2.p2=(long)hMapFile;
+			psInfo->data.Param2.p1=pi.dwThreadId;
+
+			SetEvent(hEProcess32);
+			WaitForSingleObject(hEProcessBack32,-1);
+			ResetEvent(hEProcessBack32);
+			ReleaseMutex(hMsInfo64);
+			CloseHandle(hMsInfo64);
+			if (!(dwCreationFlags & CREATE_SUSPENDED)) 
+			{
+				if(!ResumeThreadWhenSuspended(pi.hThread))
+					FHPrint("Error when resuming the main thread of PID: %d",pi.dwProcessId);
+
+			}
+	}
+	#else
+	{
+			HANDLE hMsInfo64=CreateMutex(&SecAttr,FALSE,"Global\\HookSharedInfoMutex64");
+			WaitForSingleObject(hMsInfo64,-1);
+			PushHandles();  // fix-me!!!! - not a protected operation in shared memory!!!!
+			psInfo64->type=93;
+			psInfo64->pid=pi.dwProcessId;
+			psInfo64->data.Param2.p2=(long)hMapFile;
+			psInfo64->data.Param2.p1=pi.dwThreadId;
+			
+			SetEvent(hEProcess);
+			WaitForSingleObject(hEProcessBack,-1);
+			ResetEvent(hEProcessBack);
+			ReleaseMutex(hMsInfo64);
+			CloseHandle(hMsInfo64);
+			if (!(dwCreationFlags & CREATE_SUSPENDED)) 
+			{
+				if(!ResumeThreadWhenSuspended(pi.hThread))
+					FHPrint("Error when resuming the main thread of PID: %d",pi.dwProcessId);
+			}
+	}
+	#endif
+	if(psm && psm->isWatching)
+		NotifyProcess((WCHAR*)lpApplicationName,(WCHAR*)lpCommandLine,10,CurrentPid,lpProcessInformation->dwProcessId);
 	return ret;
 }
