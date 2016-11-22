@@ -5,7 +5,8 @@ FishHook is a Windows inline hook platform, which supports x86 and x64 environme
 ### Dependencies
  * Visual Studio 2010. The community version is free.
  * Detours Express 3.0 x86
- * Detours x64. Original Detours x64 is charged. [Here](http://bbs.pediy.com/showthread.php?t=156369) is a third-party-made Detours x64 lib, which is based on mhook.
+ * Detours x64. Original Detours x64 is charged. [Here](http://bbs.pediy.com/showthread.php?t=156369) is a third-party-made Detours x64 lib, which is based on mhook. A copy of it is uploaded [here](https://github.com/Menooker/FishHook/files/605676/Detours.V3.0.x64.zip).
+ 
 ### Build me
 This repo includes a VS2010 solution. Open FishHook32.sln. Build x86 version of the project "FishHook32". This generates "FishHook32.dll". Then switch to x64 mode and build the project "FishHook32" again. This generates "FishHook64.dll". Finally, switch to x86 mode and build and run project FishHookTest, which is an example of FishHook.
 
