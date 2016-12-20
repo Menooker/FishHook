@@ -72,9 +72,9 @@ DWORD WINAPI ReleaseHookProc (LPVOID lpParam);
 extern long Hook(void ** ppOld,PVOID pNew);
 extern int __stdcall myCreateProcessW(LPCWSTR lpApplicationName,LPWSTR lpCommandLine,LPSECURITY_ATTRIBUTES lpProcessAttributes, LPSECURITY_ATTRIBUTES lpThreadAttributes,BOOL bInheritHandles,DWORD dwCreationFlags,LPVOID lpEnvironment,LPCWSTR lpCurrentDirectory,LPSTARTUPINFOW lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation);
 //exports
-MYLIBAPI  long __stdcall SetIATHook(HANDLE PID,long,void*,int);
+MYLIBAPI  long __stdcall SetIATHook(HANDLE PID,long,void*,FishHookTypes);
 
-MYLIBAPI long __stdcall SetIATHookByAPC(HANDLE hProcess, HANDLE PID,void* callproc,int *pDLLid,long num);
+MYLIBAPI long __stdcall SetIATHookByAPC(HANDLE hProcess, HANDLE PID,void* callproc,FishHookTypes *pDLLid,long num);
 MYLIBAPI long __stdcall ResumeProcessEx(long pid);
 MYLIBAPI long __stdcall SuspendProcessEx(long pid);
 #ifdef _WIN64
@@ -82,7 +82,7 @@ MYLIBAPI long __stdcall SuspendProcessEx(long pid);
 	MYLIBAPI  HANDLE __stdcall StartListening();
 	MYLIBAPI long FHPrint(char *format,...);
 #else
-	MYLIBAPI  long __stdcall SetAPIHook64(long pid,long callproc,int *pDLLid,long num);
+	MYLIBAPI  long __stdcall SetAPIHook64(long pid,long callproc,FishHookTypes *pDLLid,long num);
 	MYLIBAPI HANDLE __stdcall ListenOutput(ptOutputProc p);
 	MYLIBAPI BOOL __stdcall IsWow64ProcessEx(HANDLE hProcess);
 	MYLIBAPI long __stdcall SetCustomHook(char* oldName,char* oldMod, char* newName, char* newMod, char* oldProcAddr,long is64); /*10-25 new*/
@@ -925,7 +925,7 @@ long __stdcall SetAPIHook32(long pid,int *pDLLid,long num)
 			 else
 			 {
 				 hProcess= OpenProcess(PROCESS_ALL_ACCESS,0,sInfo.pid);
-				 ret=SetIATHookByAPC(hProcess,(HANDLE)sInfo.pid,(void*)1,&(sInfo.data.intArray[1]),sInfo.data.intArray[0]);
+				 ret=SetIATHookByAPC(hProcess,(HANDLE)sInfo.pid,(void*)1,(FishHookTypes*)&(sInfo.data.intArray[1]),sInfo.data.intArray[0]);
 			 }
 			 SetEvent(hEProcessBack);
 			 ResetEvent(hEProcess);	
@@ -1042,7 +1042,7 @@ long __stdcall SetAPIHook32(long pid,int *pDLLid,long num)
 			 if (hProcess!=0)
 			 {
 
-				 psInfo64->ret=SetIATHookByAPC(hProcess,(HANDLE)psInfo64->pid,(void*)1,&psInfo64->data.intArray[1],psInfo64->data.intArray[0]);
+				 psInfo64->ret=SetIATHookByAPC(hProcess,(HANDLE)psInfo64->pid,(void*)1,(FishHookTypes*)&psInfo64->data.intArray[1],psInfo64->data.intArray[0]);
 			 }
 			 else
 			 {
@@ -1144,7 +1144,7 @@ long __stdcall SetAPIHook32(long pid,int *pDLLid,long num)
  }
 
 #ifdef _WIN64
-extern long __stdcall SetIATHookByAPC(HANDLE hProcess, HANDLE PID,void * callproc,int *pDLLid,long num)
+extern long __stdcall SetIATHookByAPC(HANDLE hProcess, HANDLE PID,void * callproc,FishHookTypes *pDLLid,long num)
 {
 	if (num<=20)
 	{
@@ -1211,7 +1211,7 @@ extern long __stdcall SetIATHookByAPC(HANDLE hProcess, HANDLE PID,void * callpro
 	}
 }
 #else
- long __stdcall SetIATHookByAPC(HANDLE hProcess, HANDLE PID,void* callproc,int* pDLLid,long num)
+ long __stdcall SetIATHookByAPC(HANDLE hProcess, HANDLE PID,void* callproc,FishHookTypes* pDLLid,long num)
 {
 	HANDLE hMutex = CreateMutex(&SecAttr,FALSE,"Global\\HookDllMutex");
 	WaitForSingleObject(hMutex,-1);
@@ -1339,7 +1339,7 @@ LRESULT CALLBACK HookProc(int nCode, WPARAM wParam, LPARAM lParam)
 	return 1;
 }
 
- long __stdcall SetIATHook(HANDLE PID,long bp,void* callproc,int DLLid)
+ long __stdcall SetIATHook(HANDLE PID,long bp,void* callproc,FishHookTypes DLLid)
 {
 	 breakpoint=bp;
 	 Status=0;
@@ -1737,7 +1737,7 @@ BOOL APIENTRY DllMain( HANDLE hModule,
 
 
 #ifndef _WIN64
-long __stdcall SetAPIHook64(long pid,long callproc,int *pDLLid,long num)
+long __stdcall SetAPIHook64(long pid,long callproc,FishHookTypes *pDLLid,long num)
 {
 	if (psInfo64==0)
 		return 100;

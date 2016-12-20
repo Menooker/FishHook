@@ -14,8 +14,8 @@ MYLIBAPI long __stdcall LeaveSharedMemory(HANDLE hM,SyncBlock* psb);
 MYLIBAPI long __stdcall CallFilter(SyncBlock* psb);
 MYLIBAPI long __stdcall CreateFilterPort(WCHAR* lpEvent,WCHAR* lpEventBack,WCHAR* lpMutex,SharedInfo* psinfo);
 MYLIBAPI long __stdcall CreateNormalProcess(WCHAR* path,HANDLE* pProcess);
-MYLIBAPI long __stdcall SetIATHookByAPC(HANDLE hProcess, HANDLE PID,void * callproc,int *pDLLid,long num);
-MYLIBAPI long __stdcall SetAPIHook64(long pid,long callproc,int *pDLLid,long num);
+MYLIBAPI long __stdcall SetIATHookByAPC(HANDLE hProcess, HANDLE PID,void * callproc,FishHookTypes *pDLLid,long num);
+MYLIBAPI long __stdcall SetAPIHook64(long pid,long callproc,FishHookTypes *pDLLid,long num);
 MYLIBAPI BOOL __stdcall IsWow64ProcessEx(HANDLE hProcess);
 MYLIBAPI void __stdcall InitFishHook();
 #ifdef _WIN64

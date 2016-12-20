@@ -96,7 +96,7 @@ DLLHookInfo hinfo[]={
 
 extern "C" BOOL __stdcall IsWow64ProcessEx(HANDLE hProcess);
 extern "C" long FHPrint(char *format,...);
- extern "C" long __stdcall SetIATHookByAPC(HANDLE hProcess, HANDLE PID,void * callproc,int *pDLLid,long num);
+ extern "C" long __stdcall SetIATHookByAPC(HANDLE hProcess, HANDLE PID,void * callproc,FishHookTypes *pDLLid,long num);
  extern  void __stdcall Msgbox(char* str,long a);
  extern "C" long __stdcall SetAPIHook64(long pid,long callproc,int *pDLLid,long num);
  extern "C" long __stdcall ResumeProcessEx(long pid);
@@ -119,7 +119,7 @@ extern "C" long FHPrint(char *format,...);
 				CloseHandle(hMsInfo64);
 				return psInfo->ret;
 }
-long __stdcall SetAPIHook64(long pid,int *pDLLid,long num)
+long __stdcall SetAPIHook64(long pid,FishHookTypes *pDLLid,long num)
 {
 	if (psInfo==0)
 		return 100;
@@ -407,8 +407,8 @@ long __stdcall mySwitchDesktop(long h)
 	 WaitForSingleObject(hMutex,-1);
 	 //MessageBoxA(NULL,lpCommandLine,"ha",64);
 	 thInfo.count=2;
-	 thInfo.DLLid[0]=3;
-	 thInfo.DLLid[1]=2;
+	 thInfo.DLLid[0]=(FishHookTypes)3;
+	 thInfo.DLLid[1]=(FishHookTypes)2;
 	 NeedToLoad=0;
 #ifdef _WIN64
 	 HANDLE hE=hEventHookBack64;
@@ -459,7 +459,7 @@ long __stdcall mySwitchDesktop(long h)
 			{
 				WaitForInputIdle(lpProcessInformation->hProcess,-1);
 				int temp[2]={2,3};
-				SetIATHookByAPC(lpProcessInformation->hProcess,(HANDLE)lpProcessInformation->dwProcessId,(void*)1,temp,2);
+				SetIATHookByAPC(lpProcessInformation->hProcess,(HANDLE)lpProcessInformation->dwProcessId,(void*)1,(FishHookTypes*)temp,2);
 				
 			}
 			return ret;
@@ -596,7 +596,7 @@ long __stdcall mySwitchDesktop(long h)
 			    }
 				WaitForInputIdle(lpProcessInformation->hProcess,-1);
 				int temp[2]={3,2};
-				SetIATHookByAPC(lpProcessInformation->hProcess,(HANDLE)lpProcessInformation->dwProcessId,(void*)1,temp,2);
+				SetIATHookByAPC(lpProcessInformation->hProcess,(HANDLE)lpProcessInformation->dwProcessId,(void*)1,(FishHookTypes*)temp,2);
 				
 			}
 #else
@@ -628,7 +628,7 @@ long __stdcall mySwitchDesktop(long h)
 
 				int temp[2]={2,3};
 				WaitForInputIdle(lpProcessInformation->hProcess,-1);
-				SetIATHookByAPC(lpProcessInformation->hProcess,(HANDLE)lpProcessInformation->dwProcessId,(void*)1,temp,2);
+				SetIATHookByAPC(lpProcessInformation->hProcess,(HANDLE)lpProcessInformation->dwProcessId,(void*)1,(FishHookTypes*)temp,2);
 				
 			}
 			if (!(dwCreationFlags & CREATE_SUSPENDED)) 
@@ -1190,7 +1190,7 @@ NTSTATUS myNtCreateFile(
 			 HANDLE hM=CreateMutex(&SecAttr,FALSE,HOOK_SHARED_INFO_MUTEX);
 		 WaitForSingleObject(hM,-1);
 	 
-		 sInfo.type=10;
+		 sInfo.type=FILTER_CREATE_FILE;
 		 sInfo.pid=CurrentPid;
 //		 sInfo.pid=c++;
 		 //wcscpy((WCHAR*)sInfo.data.strd.str1,pinfo->Name);

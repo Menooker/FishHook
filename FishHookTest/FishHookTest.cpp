@@ -3,12 +3,42 @@
 
 #include "stdafx.h"
 #include "../FishHook32/exports.h"
+#include <iostream>
+#include <string>
+using namespace std;
+
+long __stdcall CallBackProc(SharedInfo* psInfo)
+ {
+	 	 WCHAR* pathname;
+		 WCHAR* keyname;
+		 char* pstr;
+	 	 switch(psInfo->type )
+		 {
+		 case FILTER_CREATE_PROCESS_PRE:
+			 cout<<"CreateProcess @pid "<<psInfo->pid<<endl;
+			 printf("str1: %ws\n",(wchar_t*)psInfo->data.strd.str1);
+             printf("str2: %ws\n",(wchar_t*)psInfo->data.strd.str2);
+			 return 1; //change to 0 if you don't want to allow creating process
+			 break;
+		 case FILTER_CREATE_PROCESS_POST:
+			 cout<<"CreateProcess @pid "<<psInfo->pid<<endl;
+			 printf("str1: %ws\n",(wchar_t*)psInfo->data.strd.str1);
+             printf("str2: %ws\n",(wchar_t*)psInfo->data.strd.str2);
+			 printf("New pid= %d\n" ,psInfo->data.intArray[253]);
+			 return 1;
+			 break;
+		 default:
+			 cout<<"???"<<endl;
+		 }
+ 
+		 return 1;
+ }
 
 int _tmain(int argc, _TCHAR* argv[])
 {
 	InitFishHook();
-	int id[]={6,11};
-/*	PROCESS_INFORMATION info;
+	FishHookTypes id[]={HOOK_CreateProcessInternalW,HOOK_AicLaunchAdminProcess};
+	PROCESS_INFORMATION info;
 	STARTUPINFO si;
 	memset(&si,0,sizeof(si));
 
@@ -17,12 +47,12 @@ int _tmain(int argc, _TCHAR* argv[])
 	si.dwFlags=STARTF_USESHOWWINDOW;
 	WCHAR path[]=L"cmd";
 	CreateProcess(NULL,path,NULL,NULL,0,CREATE_SUSPENDED|CREATE_NEW_CONSOLE,NULL,NULL,&si,&info);
-	SetIATHookByAPC(info.hProcess,(HANDLE)info.dwProcessId,NULL,id,1);
+	printf("RET=%d",SetIATHookByAPC(info.hProcess,(HANDLE)info.dwProcessId,CallBackProc,id,2));
 	ResumeThread(info.hThread);
-	WaitForSingleObject(info.hProcess,-1);
+	//WaitForSingleObject(info.hProcess,-1);
 	//*/
 
-    HWND hWnd = FindWindow(NULL,L"CWNPTransportImpl");
+    /*HWND hWnd = FindWindow(NULL,L"CWNPTransportImpl");
     DWORD pid;
 	GetWindowThreadProcessId(hWnd,&pid);
 	//HANDLE hprocess=OpenProcess(PROCESS_ALL_ACCESS,FALSE,pid);

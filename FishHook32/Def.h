@@ -13,7 +13,26 @@
 #define REGDLLNUM 11
 #define CHOOK_NUM 10
 
+#define FILTER_CREATE_PROCESS_PRE 3
+#define FILTER_CREATE_PROCESS_POST 10
+#define FILTER_SET_REG_VALUE 8
+#define FILTER_CREATE_FILE 11
 
+typedef enum
+{
+	HOOK_vbaStrCmp=0,
+	HOOK_SwitchDesktop,
+	HOOK_CreateProcessA,
+	HOOK_CreateProcessW,
+	HOOK_MessageBoxA,
+	HOOK_MessageBoxW,
+	HOOK_CreateProcessInternalW,
+	HOOK_ShellExecuteExW,
+	HOOK_ZwSetValueKey,
+	HOOK_SHCreateProcess,
+	HOOK_NtCreateFile,
+	HOOK_AicLaunchAdminProcess,
+}FishHookTypes;
 
 #ifndef MYLIBAPI
 #define MYLIBAPI extern "C"__declspec(dllimport)
@@ -86,7 +105,7 @@ struct SharedInfo
  struct ToHookInfo
  {
 	 int count;
-	 int DLLid[20];
+	 FishHookTypes DLLid[20];
  };
 
  struct CustomHook/*10-25 new*/
