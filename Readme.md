@@ -20,7 +20,7 @@ The other way to utilize FishHook is to use custom hooks. You should write the y
 Some may want to hook the child-process created by a hooked process, which is a common way to build a sandbox or a monitor program. FishHook provides built-in "fake" APIs which will automatically hook the newly created process launched by a hooked program. 
 
 ## A quick example on writing a filter
-
+Create an x86 Win32 console program.
  ```c
 #include "stdafx.h"
 #include "../FishHook32/exports.h"
@@ -75,4 +75,43 @@ int _tmain(int argc, _TCHAR* argv[])
 }
 
  ```
- This program writes a filter "CallBackProc" and then creates and hook a "cmd" procress. If the cmd process creates a new process, CallBackProc is called and you can see some outputs in our debugger console. Note that all the processes created by the cmd process are hooked too. 
+ This program writes a filter "CallBackProc" and then creates and hook a "cmd" procress. You should first call InitFishHook() before calling any FishHook APIs. If the cmd process creates a new process, CallBackProc is called and you can see some outputs in our debugger console. Note that all the processes created by the cmd process are hooked too. 
+ 
+## A quick example on writing a custom hook
+Now we write a custom hook on Windows API MessageBoxW. First create a dll and add the following code.
+ ```c
+extern "C" __declspec(dllimport) int (__stdcall *oldMessageBoxW)( HWND hWnd, LPWSTR lpText, LPCWSTR lpCaption,UINT uType);
+int __stdcall myMessageBoxW( HWND hWnd, LPWSTR lpText, LPCWSTR lpCaption,UINT uType)
+{	
+    return oldMessageBoxW(hWnd,L"Hello",L"World",uType);
+}
+ ```
+ We wrote a "fake" MessageBoxW which changed the behavior of the API. Also, in the first line of code, we exported a variable "oldMessageBoxW" which holds the true address of "MessageBoxW". Compile the DLL into x64 and x86 version, "myhook.dll" and "myhook64.dll". We can find the exported name of myMessageBoxW in x86 DLL is changed to "\_myMessageBoxW@16". In x64 version DLL, the exported name is unchanged, "myMessageBoxW".
+ 
+ We then write the debugger code. In a 32-bit program:
+  ```c
+int _tmain(int argc, _TCHAR* argv[])
+{
+	InitFishHook();
+	FishHookTypes id[]={HOOK_CreateProcessInternalW,HOOK_AicLaunchAdminProcess};
+	PROCESS_INFORMATION info;
+	STARTUPINFO si;
+	memset(&si,0,sizeof(si));
+	si.cb=sizeof(si);
+	si.wShowWindow =SW_SHOW;
+	si.dwFlags=STARTF_USESHOWWINDOW;
+	WCHAR path[]=L"cmd";
+	CreateProcess(NULL,path,NULL,NULL,0,CREATE_SUSPENDED|CREATE_NEW_CONSOLE,NULL,NULL,&si,&info);
+  	SetCustomHook("MessageBoxW","user32.dll","_myMessageBoxW@16","C:\\path\\to\\myhook.dll","oldMessageBoxW",0);
+  	SetCustomHook("MessageBoxW","user32.dll","myMessageBoxW","C:\\path\\to\\myhook64.dll","oldMessageBoxW",1);	
+	printf("RET=%d",SetIATHookByAPC(info.hProcess,(HANDLE)info.dwProcessId,NULL,id,2));
+	ResumeThread(info.hThread);	
+	system("pause");
+	return 0;
+} 
+  ``` 
+ This program creates and hooks a "cmd" process. All child process created by it are also hooked. In all these processes, the API of MessageBoxW has been replaced by myMessageBoxW, no matter 32-bit or 64-bit the process is. You can try "regsvr32" in cmd console to check it out. (regsvr32 will orignially show a messagebox to tell you the usage of the program, but it will be replaced by our "Hello world" message.)
+ 
+ 
+## More details
+See Mannual.md
