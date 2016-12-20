@@ -19,6 +19,7 @@ MYLIBAPI long __stdcall SetAPIHook64(long pid,long callproc,FishHookTypes *pDLLi
 MYLIBAPI BOOL __stdcall IsWow64ProcessEx(HANDLE hProcess);
 MYLIBAPI void __stdcall InitFishHook();
 MYLIBAPI long __stdcall SetCustomHook(char* oldName,char* oldMod, char* newName, char* newMod, char* oldProcAddr,long is64);
+MYLIBAPI HANDLE __stdcall ListenOutput(ptOutputProc p);
 #ifdef _WIN64
 MYLIBAPI  void CALLBACK DLLEntry(HWND hwnd, HINSTANCE hinst, LPWSTR lpszCmdLine,int nCmdShow);
 #endif
