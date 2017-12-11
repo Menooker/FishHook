@@ -1616,14 +1616,15 @@ BOOL APIENTRY DllMain( HANDLE hModule,
 					}
 					else
 					{
-						FHPrint("DLLid %d @ %d\n",DLLid,pid);
+						//FHPrint("DLLid %d @ %d\n",DLLid,pid);
+						//FHPrint("DLLid %d @ %d\n",DLLid,HookIt(hinfo[DLLid].ModName,hinfo[DLLid].ProcName,hinfo[DLLid].pProc,hinfo[DLLid].ppOld));
 						HookIt(hinfo[DLLid].ModName,hinfo[DLLid].ProcName,hinfo[DLLid].pProc,hinfo[DLLid].ppOld);
 					}
 				}
 
 				//MessageBox(0,"Inject Success!","FishHook",64);
 				thInfo.count=0;		
-				FHPrint("CHILD IN\n");
+				//FHPrint("CHILD IN\n");
 #ifdef _WIN64
 				long sus=psm->suspend64;
 				psm->suspend64=0;
